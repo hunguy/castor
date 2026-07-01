@@ -34,8 +34,13 @@ func (a *app) castURLCommand() *cli.Command {
 				return nil
 			}
 
+			cfg, err := a.config()
+			if err != nil {
+				return err
+			}
+
 			stream := &media.Stream{URL: urlObj, ContentType: media.DetectFromExtension(urlObj)}
-			return cast.Play(ctx, a.cfg.Cast(), stream)
+			return cast.Play(ctx, cfg.Cast(), stream)
 		},
 	}
 }

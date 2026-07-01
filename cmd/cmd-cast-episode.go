@@ -42,7 +42,12 @@ func (a *app) castEpisodeCommand() *cli.Command {
 			},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
-			src, err := a.cfg.Source(sourceName)
+			cfg, err := a.config()
+			if err != nil {
+				return err
+			}
+
+			src, err := cfg.Source(sourceName)
 			if err != nil {
 				return err
 			}

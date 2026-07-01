@@ -1,12 +1,14 @@
-// Package cmd wires the castor command tree. Configuration is loaded once in
-// the root's Before hook into a typed struct the subcommand closures share —
-// no metadata maps, no runtime type assertions.
+// Package cmd wires the castor command tree. Configuration is loaded lazily
+// into a typed struct the subcommand closures share — no metadata maps, no
+// runtime type assertions — so commands that don't need a config (scan, info,
+// help) never require one.
 package cmd
 
 import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sync"
 
 	"github.com/urfave/cli/v3"
 
@@ -14,16 +16,29 @@ import (
 	"github.com/stupside/castor/internal/version"
 )
 
-// app carries state shared by every subcommand. cfg is populated by the root
-// Before hook, which urfave/cli runs before any subcommand action.
+// app carries state shared by every subcommand.
 type app struct {
-	cfg *config.Config
+	configPath string
+
+	once sync.Once
+	cfg  *config.Config
+	err  error
+}
+
+// config loads the configuration on first use and memoizes the result.
+func (a *app) config() (*config.Config, error) {
+	a.once.Do(func() {
+		a.cfg, a.err = config.Load(a.configPath)
+		if a.err == nil {
+			slog.Info("config loaded", "path", a.configPath)
+		}
+	})
+	return a.cfg, a.err
 }
 
 // Root returns the root CLI command.
 func Root() *cli.Command {
 	a := &app{}
-	var configPath string
 
 	return &cli.Command{
 		Name:    "castor",
@@ -35,21 +50,12 @@ func Root() *cli.Command {
 				Aliases:     []string{"c"},
 				Usage:       "Path to configuration file",
 				Value:       "config.yaml",
-				Destination: &configPath,
+				Destination: &a.configPath,
 			},
 			&cli.BoolFlag{
 				Name:  "debug",
 				Usage: "Enable debug logging",
 			},
-		},
-		Before: func(ctx context.Context, cmd *cli.Command) (context.Context, error) {
-			cfg, err := config.Load(configPath)
-			if err != nil {
-				return ctx, err
-			}
-			slog.InfoContext(ctx, "config loaded", "path", configPath)
-			a.cfg = cfg
-			return ctx, nil
 		},
 		Commands: []*cli.Command{
 			a.castCommand(),
