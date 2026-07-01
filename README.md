@@ -134,6 +134,10 @@ make build                                # cmake-builds libwhisper.a once (~1 m
 
 # Run without producing a binary first:
 make run ARGS="cast browse --source vidsrc"
+
+# Or, for plain `go run .` / `go build`, export the env once per shell:
+eval "$(make env)"
+go run . cast browse --source vidsrc
 ```
 
 ### Debug mode

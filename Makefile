@@ -11,10 +11,11 @@ export GGML_METAL_PATH_RESOURCES := $(CURDIR)/$(WHISPER)
 
 ifeq ($(shell uname -s),Darwin)
 export LIBRARY_PATH := $(LIBRARY_PATH):$(CURDIR)/$(BUILD)/ggml/src/ggml-blas:$(CURDIR)/$(BUILD)/ggml/src/ggml-metal
-LDFLAGS := -ldflags "-extldflags '-framework Foundation -framework Metal -framework MetalKit'"
+FRAMEWORKS := -framework Foundation -framework Metal -framework MetalKit
+LDFLAGS := -ldflags "-extldflags '$(FRAMEWORKS)'"
 endif
 
-.PHONY: build run vet clean
+.PHONY: build run vet env clean
 
 build: $(LIB)
 	go build $(LDFLAGS) -o castor .
@@ -24,6 +25,15 @@ run: $(LIB)
 
 vet: $(LIB)
 	go vet ./...
+
+# eval "$(make env)" once per shell, then plain `go run .` / `go build` work.
+env:
+	@echo 'export C_INCLUDE_PATH="$(C_INCLUDE_PATH)"'
+	@echo 'export LIBRARY_PATH="$(LIBRARY_PATH)"'
+	@echo 'export GGML_METAL_PATH_RESOURCES="$(GGML_METAL_PATH_RESOURCES)"'
+ifneq ($(FRAMEWORKS),)
+	@echo 'export CGO_LDFLAGS="$(FRAMEWORKS)"'
+endif
 
 clean:
 	rm -rf $(BUILD) castor
