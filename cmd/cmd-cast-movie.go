@@ -4,11 +4,9 @@ import (
 	"context"
 
 	"github.com/urfave/cli/v3"
-
-	"github.com/stupside/castor/internal/app"
 )
 
-func castMovieCommand() *cli.Command {
+func (a *app) castMovieCommand() *cli.Command {
 	var itemID string
 	var sourceName string
 
@@ -30,17 +28,12 @@ func castMovieCommand() *cli.Command {
 			},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
-			cfg, err := app.ConfigFrom(cmd)
+			src, err := a.cfg.Source(sourceName)
 			if err != nil {
 				return err
 			}
 
-			src, err := cfg.Source(sourceName)
-			if err != nil {
-				return err
-			}
-
-			return extractAndCast(ctx, cmd, cfg, src.MovieURLs(itemID))
+			return a.extractAndCast(ctx, cmd, src.MovieURLs(itemID))
 		},
 	}
 }

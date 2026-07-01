@@ -7,12 +7,11 @@ import (
 
 	"github.com/urfave/cli/v3"
 
-	"github.com/stupside/castor/internal/app"
 	"github.com/stupside/castor/internal/cast"
 	"github.com/stupside/castor/internal/media"
 )
 
-func castURLCommand() *cli.Command {
+func (a *app) castURLCommand() *cli.Command {
 	var urlArg string
 
 	return &cli.Command{
@@ -35,13 +34,8 @@ func castURLCommand() *cli.Command {
 				return nil
 			}
 
-			cfg, err := app.ConfigFrom(cmd)
-			if err != nil {
-				return err
-			}
-
 			stream := &media.Stream{URL: urlObj, ContentType: media.DetectFromExtension(urlObj)}
-			return cast.CastStream(ctx, cfg, stream)
+			return cast.Play(ctx, a.cfg.Cast(), stream)
 		},
 	}
 }

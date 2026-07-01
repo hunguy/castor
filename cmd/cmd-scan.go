@@ -6,22 +6,16 @@ import (
 
 	"github.com/urfave/cli/v3"
 
-	"github.com/stupside/castor/internal/app"
 	"github.com/stupside/castor/internal/device"
 )
 
 // scanCommand returns the "scan" CLI subcommand.
-func scanCommand() *cli.Command {
+func (a *app) scanCommand() *cli.Command {
 	return &cli.Command{
 		Name:  "scan",
 		Usage: "List all devices on the local network",
 		Action: func(ctx context.Context, cmd *cli.Command) error {
-			cfg, err := app.ConfigFrom(cmd)
-			if err != nil {
-				return err
-			}
-
-			devices, err := device.Discover(ctx, cfg.Network.Timeout)
+			devices, err := device.Discover(ctx, a.cfg.Network.Timeout)
 			if err != nil {
 				return fmt.Errorf("scan failed: %w", err)
 			}

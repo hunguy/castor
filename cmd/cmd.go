@@ -1,3 +1,6 @@
+// Package cmd wires the castor command tree. Configuration is loaded once in
+// the root's Before hook into a typed struct the subcommand closures share —
+// no metadata maps, no runtime type assertions.
 package cmd
 
 import (
@@ -7,12 +10,19 @@ import (
 
 	"github.com/urfave/cli/v3"
 
-	"github.com/stupside/castor/internal/app"
+	"github.com/stupside/castor/internal/config"
 	"github.com/stupside/castor/internal/version"
 )
 
+// app carries state shared by every subcommand. cfg is populated by the root
+// Before hook, which urfave/cli runs before any subcommand action.
+type app struct {
+	cfg *config.Config
+}
+
 // Root returns the root CLI command.
 func Root() *cli.Command {
+	a := &app{}
 	var configPath string
 
 	return &cli.Command{
@@ -33,28 +43,31 @@ func Root() *cli.Command {
 			},
 		},
 		Before: func(ctx context.Context, cmd *cli.Command) (context.Context, error) {
-			cfg, err := app.Load(configPath)
+			cfg, err := config.Load(configPath)
 			if err != nil {
 				return ctx, err
 			}
 			slog.InfoContext(ctx, "config loaded", "path", configPath)
-			cmd.Metadata["config"] = cfg
+			a.cfg = cfg
 			return ctx, nil
 		},
 		Commands: []*cli.Command{
-			castCommand(),
-			scanCommand(),
-			{
-				Name:  "info",
-				Usage: "Print build information",
-				Action: func(ctx context.Context, cmd *cli.Command) error {
-					fmt.Printf("version    %s\n", version.Version)
-					fmt.Printf("commit     %s\n", version.Commit)
-					fmt.Printf("build time %s\n", version.BuildTime)
-					return nil
-				},
-			},
+			a.castCommand(),
+			a.scanCommand(),
+			infoCommand(),
 		},
-		Metadata: map[string]any{},
+	}
+}
+
+func infoCommand() *cli.Command {
+	return &cli.Command{
+		Name:  "info",
+		Usage: "Print build information",
+		Action: func(ctx context.Context, cmd *cli.Command) error {
+			fmt.Printf("version    %s\n", version.Version)
+			fmt.Printf("commit     %s\n", version.Commit)
+			fmt.Printf("build time %s\n", version.BuildTime)
+			return nil
+		},
 	}
 }

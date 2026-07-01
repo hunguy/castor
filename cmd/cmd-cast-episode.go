@@ -4,11 +4,9 @@ import (
 	"context"
 
 	"github.com/urfave/cli/v3"
-
-	"github.com/stupside/castor/internal/app"
 )
 
-func castEpisodeCommand() *cli.Command {
+func (a *app) castEpisodeCommand() *cli.Command {
 	var season int
 	var episode int
 	var itemID string
@@ -44,17 +42,12 @@ func castEpisodeCommand() *cli.Command {
 			},
 		},
 		Action: func(ctx context.Context, cmd *cli.Command) error {
-			cfg, err := app.ConfigFrom(cmd)
+			src, err := a.cfg.Source(sourceName)
 			if err != nil {
 				return err
 			}
 
-			src, err := cfg.Source(sourceName)
-			if err != nil {
-				return err
-			}
-
-			return extractAndCast(ctx, cmd, cfg, src.EpisodeURLs(itemID, uint(season), uint(episode)))
+			return a.extractAndCast(ctx, cmd, src.EpisodeURLs(itemID, uint(season), uint(episode)))
 		},
 	}
 }
