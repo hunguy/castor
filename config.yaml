@@ -39,14 +39,13 @@ actions:
 transcode:
   # Use a bare binary name to rely on PATH, or provide an absolute path.
   ffmpeg_path: "ffmpeg"
-  read_rate: 1
-  read_rate_burst: 5
+  # Upstream HTTP I/O timeout (passed to ffmpeg's -rw_timeout). The codec and
+  # pacing choices used to live here too; they're now picked by the per-device
+  # planner so the same config works regardless of source media.
   rw_timeout: 30s
-  video_codec: "copy"
-  audio_codec: "aac"
-  audio_bitrate: "256k"
-  audio_sample_rate: 48000
-  initial_data_threshold: 65536
+  # Font used when burning generated subtitles into the video. Empty uses the
+  # macOS system Helvetica.
+  # subtitle_font_file: "/System/Library/Fonts/Helvetica.ttc"
 
 sources:
   - name: "vidsrc"
@@ -62,3 +61,24 @@ sources:
     templates:
       movie: "/embed/movie/{itemID}"
       episode: "/embed/tv/{itemID}/{season}/{episode}"
+
+whisper:
+  # Settings for the in-process whisper.cpp transcriber. Setting `enable: true`
+  # is the only way to turn on auto-generated subtitles; there is no CLI flag.
+  # The model is auto-downloaded once to your user cache directory
+  # (e.g. ~/Library/Caches/castor/whisper/ggml-tiny.en.bin on macOS); set
+  # model_path explicitly to use a different model.
+  enable: true
+  model_path: ""
+  # BCP-47 language tag, or "auto" to let whisper detect.
+  language: "auto"
+  # Length of each audio window passed to the whisper context. Larger windows
+  # produce better transcripts but increase end-to-end latency.
+  chunk_seconds: 15
+  # CPU threads for whisper-cli. 0 lets whisper-cli pick a default.
+  threads: 0
+
+tmdb:
+  # Used by `castor cast browse`. Get a free key at https://www.themoviedb.org/settings/api
+  # Or set TMDB_API_KEY in the environment (overrides this value).
+  api_key: "<YOUR_TMDB_API_KEY>"

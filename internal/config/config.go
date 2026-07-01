@@ -1,0 +1,106 @@
+// Package config assembles the application configuration. It sits at the
+// edge of the dependency graph: every section's type is owned by the package
+// that consumes it (cast, extractor, resolve, whisper) and composed here, so
+// domain packages never import application-level state.
+package config
+
+import (
+	"fmt"
+	"slices"
+	"strconv"
+	"strings"
+
+	"github.com/stupside/castor/internal/cast"
+	"github.com/stupside/castor/internal/cast/whisper"
+	"github.com/stupside/castor/internal/source/extract"
+	"github.com/stupside/castor/internal/source/resolve"
+)
+
+// Config is the full application configuration, loaded by Load.
+type Config struct {
+	Device    cast.DeviceConfig     `yaml:"device" validate:"required"`
+	Network   cast.NetworkConfig    `yaml:"network" validate:"required"`
+	Browser   extract.BrowserConfig `yaml:"browser" validate:"required"`
+	Capture   extract.CaptureConfig `yaml:"capture" validate:"required"`
+	Actions   extract.ActionConfig  `yaml:"actions" validate:"required"`
+	Sources   []Source              `yaml:"sources" validate:"dive"`
+	Resolver  resolve.Config        `yaml:"resolver" validate:"required"`
+	Transcode cast.TranscodeConfig  `yaml:"transcode" validate:"required"`
+	Whisper   whisper.Config        `yaml:"whisper"`
+	TMDB      TMDB                  `yaml:"tmdb"`
+}
+
+// TMDB holds settings for the TMDB browse subcommand. The API key may also
+// be supplied via the CASTOR_TMDB__API_KEY environment variable, so it is
+// intentionally not marked required here.
+type TMDB struct {
+	APIKey string `yaml:"api_key"`
+}
+
+// Cast bundles the sections the cast pipeline needs.
+func (c *Config) Cast() cast.Config {
+	return cast.Config{
+		Device:    c.Device,
+		Network:   c.Network,
+		Transcode: c.Transcode,
+		Whisper:   c.Whisper,
+		Resolver:  c.Resolver,
+	}
+}
+
+// Extractor bundles the sections the stream extractor needs.
+func (c *Config) Extractor() extract.Config {
+	return extract.Config{
+		Browser: c.Browser,
+		Capture: c.Capture,
+		Actions: c.Actions,
+	}
+}
+
+// Source returns the Source with the given name, or an error if not found.
+func (c *Config) Source(name string) (*Source, error) {
+	i := slices.IndexFunc(c.Sources, func(s Source) bool { return s.Name == name })
+	if i < 0 {
+		return nil, fmt.Errorf("source %q not found", name)
+	}
+	return &c.Sources[i], nil
+}
+
+// Source defines a YAML-configured source: a set of proxy hosts and the URL
+// templates to reach a movie or episode page on them.
+type Source struct {
+	Name      string    `yaml:"name" validate:"required"`
+	Proxies   []string  `yaml:"proxies" validate:"required,min=1"`
+	Templates Templates `yaml:"templates" validate:"required"`
+}
+
+// Templates holds URL templates for movies and episodes.
+type Templates struct {
+	Movie   string `yaml:"movie" validate:"required"`
+	Episode string `yaml:"episode" validate:"required"`
+}
+
+// MovieURLs expands the movie template across all proxies for a source.
+func (s *Source) MovieURLs(itemID string) []string {
+	return s.expandTemplate(s.Templates.Movie, "{itemID}", itemID)
+}
+
+// EpisodeURLs expands the episode template across all proxies for a source.
+func (s *Source) EpisodeURLs(itemID string, season, episode uint) []string {
+	return s.expandTemplate(s.Templates.Episode,
+		"{itemID}", itemID,
+		"{season}", strconv.FormatUint(uint64(season), 10),
+		"{episode}", strconv.FormatUint(uint64(episode), 10),
+	)
+}
+
+// expandTemplate substitutes placeholder/value pairs into tmpl and prefixes
+// the result with every proxy host.
+func (s *Source) expandTemplate(tmpl string, pairs ...string) []string {
+	route := strings.NewReplacer(pairs...).Replace(tmpl)
+	urls := make([]string, len(s.Proxies))
+	for i, proxy := range s.Proxies {
+		urls[i] = proxy + route
+	}
+	return urls
+}
