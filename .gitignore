@@ -6,3 +6,9 @@
 
 # Personal config override (keeps private sources/paths out of version control)
 config.local.yaml
+
+# Built castor binary (produced by `make build`)
+/castor
+
+# whisper.cpp cmake artifacts (produced by `make whisper-lib`)
+third_party/whisper.cpp/build_go/
