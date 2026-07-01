@@ -26,8 +26,10 @@ type DeviceConfig struct {
 
 // NetworkConfig holds discovery and local-interface settings.
 type NetworkConfig struct {
-	Timeout   time.Duration `yaml:"timeout" validate:"required"`
-	Interface string        `yaml:"interface" validate:"required"`
+	Timeout time.Duration `yaml:"timeout" validate:"required"`
+	// Interface pins the local stream server to a specific interface.
+	// Empty auto-detects the default route's address.
+	Interface string `yaml:"interface"`
 }
 
 // TranscodeConfig holds the small set of ffmpeg settings that aren't decided

@@ -103,11 +103,7 @@ func resolveSource(ctx context.Context, cfg Config, stream *media.Stream) (*medi
 	}
 	slog.InfoContext(ctx, "stream resolved", "url", resolved.URL.String(), "content_type", resolved.ContentType)
 
-	iface, err := net.InterfaceByName(cfg.Network.Interface)
-	if err != nil {
-		return nil, "", fmt.Errorf("looking up interface %q: %w", cfg.Network.Interface, err)
-	}
-	localIP, err := localIPv4(iface)
+	localIP, err := localIPv4(cfg.Network.Interface)
 	if err != nil {
 		return nil, "", fmt.Errorf("resolving local IP: %w", err)
 	}
@@ -139,7 +135,24 @@ func discoverAndConnect(cfg Config) deviceConnector {
 	}
 }
 
-func localIPv4(iface *net.Interface) (string, error) {
+// localIPv4 returns the IPv4 address the local stream server should bind:
+// the named interface's address, or, when name is empty, the source address
+// of the default route. The UDP "connect" performs route selection only —
+// no packet is sent.
+func localIPv4(ifaceName string) (string, error) {
+	if ifaceName == "" {
+		conn, err := net.Dial("udp4", "8.8.8.8:53")
+		if err != nil {
+			return "", fmt.Errorf("detecting default-route address (set network.interface to pin one): %w", err)
+		}
+		defer conn.Close()
+		return conn.LocalAddr().(*net.UDPAddr).IP.String(), nil
+	}
+
+	iface, err := net.InterfaceByName(ifaceName)
+	if err != nil {
+		return "", fmt.Errorf("looking up interface %q: %w", ifaceName, err)
+	}
 	addrs, err := iface.Addrs()
 	if err != nil {
 		return "", fmt.Errorf("listing addresses on %s: %w", iface.Name, err)
