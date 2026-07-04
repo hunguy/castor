@@ -1,5 +1,9 @@
 
 <p align="center">
+  <img src=".github/images/castor.svg" alt="Castor" width="200"/>
+</p>
+
+<p align="center">
   <a href="https://github.com/stupside/castor/releases/latest">
     <img src="https://img.shields.io/github/v/release/stupside/castor?style=flat-square" alt="Latest Release">
   </a>

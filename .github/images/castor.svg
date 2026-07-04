@@ -1,0 +1,72 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img" aria-label="Castor">
+  <defs>
+    <clipPath id="tail">
+      <path d="M64 70 C 76 64, 92 68, 94 79 C 96 88, 85 93, 75 89 C 66 86, 61 78, 64 70 Z"/>
+    </clipPath>
+  </defs>
+
+  <!-- Flat paddle tail — tucked to the side, soft scaly crosshatch -->
+  <path d="M64 70 C 76 64, 92 68, 94 79 C 96 88, 85 93, 75 89 C 66 86, 61 78, 64 70 Z" fill="#5c4634"/>
+  <g clip-path="url(#tail)" stroke="#7a5f47" stroke-width="1" opacity="0.85">
+    <line x1="68" y1="66" x2="92" y2="90"/>
+    <line x1="78" y1="62" x2="98" y2="84"/>
+    <line x1="96" y1="68" x2="72" y2="92"/>
+    <line x1="88" y1="62" x2="64" y2="86"/>
+  </g>
+
+  <!-- Feet — two little rounded paws peeking at the base -->
+  <ellipse cx="40" cy="91" rx="7" ry="4.5" fill="#8f6039"/>
+  <ellipse cx="60" cy="91" rx="7" ry="4.5" fill="#8f6039"/>
+
+  <!-- Ears — small and round, peeking behind the head -->
+  <circle cx="33" cy="18" r="6.5" fill="#a5744d"/>
+  <circle cx="67" cy="18" r="6.5" fill="#a5744d"/>
+  <circle cx="33" cy="17.5" r="3" fill="#855b39"/>
+  <circle cx="67" cy="17.5" r="3" fill="#855b39"/>
+
+  <!-- Head + body — one smooth, well-rounded silhouette -->
+  <path
+    d="M50 12
+       C 33 12, 26 27, 26 43
+       C 26 56, 20 62, 21 73
+       C 22 85, 34 91, 50 91
+       C 66 91, 78 85, 79 73
+       C 80 62, 74 56, 74 43
+       C 74 27, 67 12, 50 12 Z"
+    fill="#a5744d"
+  />
+
+  <!-- Belly — soft cream tummy -->
+  <ellipse cx="50" cy="70" rx="15" ry="14" fill="#ecd6b6"/>
+
+  <!-- Little paws resting on the belly -->
+  <ellipse cx="36" cy="64" rx="4.5" ry="5.5" fill="#8f6039"/>
+  <ellipse cx="64" cy="64" rx="4.5" ry="5.5" fill="#8f6039"/>
+
+  <!-- Cheek blush -->
+  <ellipse cx="33" cy="44" rx="4.5" ry="3" fill="#e79a7d" opacity="0.5"/>
+  <ellipse cx="67" cy="44" rx="4.5" ry="3" fill="#e79a7d" opacity="0.5"/>
+
+  <!-- Muzzle — soft cream snout -->
+  <ellipse cx="50" cy="45" rx="13" ry="9.5" fill="#ecd6b6"/>
+
+  <!-- Nose -->
+  <ellipse cx="50" cy="41" rx="3.8" ry="3" fill="#33241a"/>
+  <ellipse cx="48.7" cy="40" rx="1.1" ry="0.8" fill="#5e4636"/>
+
+  <!-- Gentle smile with two tiny teeth -->
+  <g fill="none" stroke="#33241a" stroke-width="1.6" stroke-linecap="round">
+    <path d="M50 44 Q 45 49 41 46.5"/>
+    <path d="M50 44 Q 55 49 59 46.5"/>
+  </g>
+  <rect x="48.2" y="46.3" width="3.6" height="2.8" rx="0.9" fill="#fffef7" stroke="#d8c39a" stroke-width="0.5"/>
+  <line x1="50" y1="46.5" x2="50" y2="48.9" stroke="#e2cfa6" stroke-width="0.6"/>
+
+  <!-- Big cute eyes -->
+  <circle cx="40" cy="34" r="5" fill="#2b1d13"/>
+  <circle cx="60" cy="34" r="5" fill="#2b1d13"/>
+  <circle cx="41.8" cy="32.1" r="1.9" fill="#ffffff"/>
+  <circle cx="61.8" cy="32.1" r="1.9" fill="#ffffff"/>
+  <circle cx="38.2" cy="35.6" r="0.9" fill="#ffffff"/>
+  <circle cx="58.2" cy="35.6" r="0.9" fill="#ffffff"/>
+</svg>
