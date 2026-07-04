@@ -9,7 +9,7 @@ builds:
     env:
       - CGO_ENABLED=1
       - "CGO_CFLAGS=-I{{ .Env.WHISPER_INCLUDE }} -I{{ .Env.WHISPER_GGML_INCLUDE }}"
-      - "CGO_LDFLAGS=-L{{ .Env.WHISPER_BUILD_AMD64 }}/src -L{{ .Env.WHISPER_BUILD_AMD64 }}/ggml/src"
+      - "CGO_LDFLAGS=-L{{ .Env.WHISPER_BUILD_LINUX_AMD64 }}/src -L{{ .Env.WHISPER_BUILD_LINUX_AMD64 }}/ggml/src"
     ldflags: &ldflags
       - -s -w
       - -X 'github.com/stupside/castor/internal/version.Commit={{.Commit}}'
@@ -23,20 +23,24 @@ builds:
     goarch: [arm64]
     env:
       - CGO_ENABLED=1
-      - CC=zcc-arm64
+      - CC=zcc-linux-arm64
       - "CGO_CFLAGS=-I{{ .Env.WHISPER_INCLUDE }} -I{{ .Env.WHISPER_GGML_INCLUDE }}"
-      - "CGO_LDFLAGS=-L{{ .Env.WHISPER_BUILD_ARM64 }}/src -L{{ .Env.WHISPER_BUILD_ARM64 }}/ggml/src"
+      - "CGO_LDFLAGS=-L{{ .Env.WHISPER_BUILD_LINUX_ARM64 }}/src -L{{ .Env.WHISPER_BUILD_LINUX_ARM64 }}/ggml/src"
     ldflags: *ldflags
     binary: castor
 
+  # Darwin binaries are cross-compiled from Linux via zig. Metal and BLAS are
+  # disabled (xcrun is unavailable outside macOS); whisper uses CPU inference.
+  # For Metal-accelerated builds, use `make build` on a macOS machine.
   - id: darwin-amd64
     main: .
     goos: [darwin]
     goarch: [amd64]
     env:
       - CGO_ENABLED=1
+      - CC=zcc-darwin-amd64
       - "CGO_CFLAGS=-I{{ .Env.WHISPER_INCLUDE }} -I{{ .Env.WHISPER_GGML_INCLUDE }}"
-      - "CGO_LDFLAGS=-L{{ .Env.WHISPER_BUILD_AMD64 }}/src -L{{ .Env.WHISPER_BUILD_AMD64 }}/ggml/src -L{{ .Env.WHISPER_BUILD_AMD64 }}/ggml/src/ggml-blas -L{{ .Env.WHISPER_BUILD_AMD64 }}/ggml/src/ggml-metal"
+      - "CGO_LDFLAGS=-L{{ .Env.WHISPER_BUILD_DARWIN_AMD64 }}/src -L{{ .Env.WHISPER_BUILD_DARWIN_AMD64 }}/ggml/src -L{{ .Env.WHISPER_BUILD_DARWIN_AMD64 }}/ggml/src/ggml-blas -L{{ .Env.WHISPER_BUILD_DARWIN_AMD64 }}/ggml/src/ggml-metal"
     ldflags: *ldflags
     binary: castor
 
@@ -46,8 +50,9 @@ builds:
     goarch: [arm64]
     env:
       - CGO_ENABLED=1
+      - CC=zcc-darwin-arm64
       - "CGO_CFLAGS=-I{{ .Env.WHISPER_INCLUDE }} -I{{ .Env.WHISPER_GGML_INCLUDE }}"
-      - "CGO_LDFLAGS=-L{{ .Env.WHISPER_BUILD_ARM64 }}/src -L{{ .Env.WHISPER_BUILD_ARM64 }}/ggml/src -L{{ .Env.WHISPER_BUILD_ARM64 }}/ggml/src/ggml-blas -L{{ .Env.WHISPER_BUILD_ARM64 }}/ggml/src/ggml-metal"
+      - "CGO_LDFLAGS=-L{{ .Env.WHISPER_BUILD_DARWIN_ARM64 }}/src -L{{ .Env.WHISPER_BUILD_DARWIN_ARM64 }}/ggml/src -L{{ .Env.WHISPER_BUILD_DARWIN_ARM64 }}/ggml/src/ggml-blas -L{{ .Env.WHISPER_BUILD_DARWIN_ARM64 }}/ggml/src/ggml-metal"
     ldflags: *ldflags
     binary: castor
 
