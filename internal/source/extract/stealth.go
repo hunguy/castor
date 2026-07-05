@@ -102,6 +102,7 @@ func allocatorOpts(cfg BrowserConfig, profile *Profile) []chromedp.ExecAllocator
 
 		chromedp.Flag("headless", headlessVal),
 		chromedp.Flag("no-sandbox", cfg.NoSandbox),
+		chromedp.Flag("disable-dev-shm-usage", true),
 
 		chromedp.Flag("disable-blink-features", "AutomationControlled"),
 		chromedp.Flag("disable-infobars", true),
