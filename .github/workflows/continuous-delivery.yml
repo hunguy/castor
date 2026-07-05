@@ -65,6 +65,7 @@ jobs:
           cmake -S "$WHISPER" -B "$BUILD" \
             -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF \
             -DWHISPER_BUILD_TESTS=OFF -DWHISPER_BUILD_EXAMPLES=OFF \
+            -DGGML_NATIVE=OFF \
             ${{ matrix.cmake_args }}
           cmake --build "$BUILD" --target whisper -j"$(nproc 2>/dev/null || sysctl -n hw.logicalcpu)"
       - env:
