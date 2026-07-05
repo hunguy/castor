@@ -17,7 +17,7 @@
     <img src="https://img.shields.io/github/license/stupside/castor?style=flat-square" alt="License">
   </a>
   <a href="https://github.com/stupside/castor/actions">
-    <img src="https://img.shields.io/github/actions/workflow/status/stupside/castor/ci.yml?style=flat-square" alt="Build Status">
+    <img src="https://img.shields.io/github/actions/workflow/status/stupside/castor/continuous-integration.yml?style=flat-square" alt="Build Status">
   </a>
 </p>
 

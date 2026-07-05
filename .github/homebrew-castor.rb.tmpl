@@ -1,0 +1,16 @@
+cask "castor" do
+  arch arm: "arm64", intel: "amd64"
+
+  version "${VERSION}"
+  sha256 arm:   "${SHA_ARM}",
+         intel: "${SHA_INTEL}"
+
+  url "https://github.com/stupside/castor/releases/download/v#{version}/castor_#{version}_darwin_#{arch}.tar.gz"
+  name "castor"
+  desc "Cast video streams to networked devices"
+  homepage "https://github.com/stupside/castor"
+
+  binary "castor"
+
+  zap trash: "~/.castor/config.yml"
+end
