@@ -60,6 +60,30 @@ Run `castor scan` to discover devices on your network.
 | **ffmpeg** | Transcoding |
 | **ffprobe** | Format detection |
 
+The Docker image bundles all three — see below.
+
+
+## Docker
+
+`ghcr.io/stupside/castor` ships with Chrome, ffmpeg and ffprobe baked in, so the only thing you provide is a config.
+
+```sh
+# Discover devices (no config required)
+docker run --rm --network host ghcr.io/stupside/castor:latest scan
+
+# Cast, mounting config.yaml and a persistent model cache
+docker run --rm --network host \
+  -v "$PWD/config.yaml:/config.yaml" \
+  -v castor-cache:/root/.cache \
+  ghcr.io/stupside/castor:latest \
+  cast player https://www.fmovies.gd/watch/movie/1315303
+```
+
+> [!IMPORTANT]
+> `--network host` is required: device discovery is SSDP multicast and the TV streams back from Castor's replay server — neither survives Docker's bridge network. Host networking is only real on **Linux**; on Docker Desktop (macOS/Windows) it won't reach your TV, so run the binary natively there instead.
+
+The `castor-cache` volume keeps the auto-downloaded whisper models (~75 MB) between runs. Swap `:latest` for `:v1.0.0` to pin a release.
+
 
 ## Quick start
 
