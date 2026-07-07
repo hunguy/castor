@@ -37,7 +37,7 @@ func fetchPosterCmd(ctx context.Context, url, posterPath string, cols, rows int)
 		if err != nil {
 			return posterReadyMsg{posterPath: posterPath, err: err}
 		}
-		defer resp.Body.Close()
+		defer func() { _ = resp.Body.Close() }()
 		if resp.StatusCode/100 != 2 {
 			return posterReadyMsg{posterPath: posterPath, err: fmt.Errorf("poster: status %d", resp.StatusCode)}
 		}
