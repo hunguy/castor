@@ -91,8 +91,17 @@ func (c *collector) add(u string, headers map[string]string, mimeType string) {
 		return
 	}
 
-	if slices.ContainsFunc(c.candidates, func(cand candidate) bool { return cand.rawURL == u }) {
-		slog.DebugContext(c.ctx, "duplicate URL, skipping", "url", u)
+	if i := slices.IndexFunc(c.candidates, func(cand candidate) bool { return cand.rawURL == u }); i >= 0 {
+		// Already captured. A URL first seen in console output carries no request
+		// headers; a later network sighting of the same URL does. Upgrade so
+		// hotlink-protected hosts get the Referer/User-Agent they require instead
+		// of a header-less 403.
+		if len(c.candidates[i].headers) == 0 && len(headers) > 0 {
+			c.candidates[i].headers = headers
+			slog.DebugContext(c.ctx, "upgraded headers for captured URL", "url", u)
+		} else {
+			slog.DebugContext(c.ctx, "duplicate URL, skipping", "url", u)
+		}
 		return
 	}
 
