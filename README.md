@@ -44,34 +44,19 @@ Castor is a CLI that extracts video streams from websites, handles format compat
 > This works on most streaming websites but won't beat sophisticated bot protection.
 
 
-## Supported devices
+## Installation
 
-### DLNA / UPnP
+Homebrew and source build a **native binary** that needs **Chrome/Chromium** (headless extraction), **ffmpeg** (transcoding), and **ffprobe** (format detection) on your `PATH`. The **Docker** image bundles all three, so there you only supply a config.
 
-Any TV implementing the DLNA/UPnP `MediaRenderer:1` profile works, which covers virtually every smart TV sold in the last decade: **Samsung** (tested), **LG**, **Sony Bravia**, **Panasonic Viera**, **Philips**, **Hisense**, **TCL**, **VIZIO**, **Sharp**. Networked players like Kodi, VLC, and Plex also work.
+### Homebrew (macOS)
 
-Run `castor scan` to discover devices on your network.
+```sh
+brew install --cask stupside/tap/castor
+```
 
-### Chromecast
+### Docker
 
-> [!WARNING]
-> Experimental: implemented but untested. Contributions welcome.
-
-
-## Requirements
-
-| Dependency | Purpose |
-|---|---|
-| **Chrome / Chromium** | Headless stream extraction |
-| **ffmpeg** | Transcoding |
-| **ffprobe** | Format detection |
-
-The Docker image bundles all three — see below.
-
-
-## Docker
-
-`ghcr.io/stupside/castor` ships with Chrome, ffmpeg and ffprobe baked in, so the only thing you provide is a config.
+`ghcr.io/stupside/castor` ships with Chrome, ffmpeg and ffprobe baked in.
 
 ```sh
 # Discover devices (no config required)
@@ -89,6 +74,32 @@ docker run --rm --network host \
 > `--network host` is required: device discovery is SSDP multicast and the TV streams back from Castor's replay server — neither survives Docker's bridge network. Host networking is only real on **Linux**; on Docker Desktop (macOS/Windows) it won't reach your TV, so run the binary natively there instead.
 
 The `castor-cache` volume keeps the auto-downloaded whisper models (~75 MB) between runs. Swap `:latest` for `:v1.0.0` to pin a release.
+
+### From source
+
+Needs Go 1.26+ and cmake (the whisper.cpp bindings are cgo and link a locally built `libwhisper.a`):
+
+```sh
+git clone --recurse-submodules https://github.com/stupside/castor.git
+cd castor
+make          # builds libwhisper.a, then the castor binary
+```
+
+`go install` won't work: the vendored whisper.cpp bindings come in through a local `replace` and need that prebuilt static lib.
+
+
+## Supported devices
+
+### DLNA / UPnP
+
+Any TV implementing the DLNA/UPnP `MediaRenderer:1` profile works, which covers virtually every smart TV sold in the last decade: **Samsung** (tested), **LG**, **Sony Bravia**, **Panasonic Viera**, **Philips**, **Hisense**, **TCL**, **VIZIO**, **Sharp**. Networked players like Kodi, VLC, and Plex also work.
+
+Run `castor scan` to discover devices on your network.
+
+### Chromecast
+
+> [!WARNING]
+> Experimental: implemented but untested. Contributions welcome.
 
 
 ## Quick start
