@@ -44,20 +44,22 @@ type candidate struct {
 
 // collector captures and deduplicates stream URLs from browser events.
 type collector struct {
-	ctx           context.Context
-	patterns      []*regexp.Regexp
-	maxCandidates int
-	mu            sync.Mutex
-	candidates    []candidate
-	notify        chan struct{} // closed on first capture
+	ctx            context.Context
+	patterns       []*regexp.Regexp
+	maxCandidates  int
+	mu             sync.Mutex
+	candidates     []candidate
+	requestHeaders map[network.RequestID]map[string]string // outgoing headers, keyed by request ID
+	notify         chan struct{}                           // closed on first capture
 }
 
 func newCollector(ctx context.Context, patterns []*regexp.Regexp, maxCandidates int) *collector {
 	return &collector{
-		ctx:           ctx,
-		patterns:      patterns,
-		maxCandidates: maxCandidates,
-		notify:        make(chan struct{}),
+		ctx:            ctx,
+		patterns:       patterns,
+		maxCandidates:  maxCandidates,
+		requestHeaders: make(map[network.RequestID]map[string]string),
+		notify:         make(chan struct{}),
 	}
 }
 
@@ -187,10 +189,18 @@ func (c *collector) Wait(ctx context.Context, graceAfterActions, collectionWindo
 func (c *collector) Listen(ev any) {
 	switch e := ev.(type) {
 	case *network.EventRequestWillBeSent:
-		c.Add(e.Request.URL, networkHeadersToMap(e.Request.Headers))
+		// Only requestWillBeSent carries the real outgoing headers (Referer,
+		// User-Agent, sec-ch-*). Keep them by request ID so a stream later
+		// confirmed by MIME on responseReceived is fetched with the same headers.
+		// Proxy and CDN hosts enforce hotlink protection and return 403 without
+		// the browser's Referer, and responseReceived's own RequestHeaders come
+		// back empty.
+		headers := networkHeadersToMap(e.Request.Headers)
+		c.storeHeaders(e.RequestID, headers)
+		c.Add(e.Request.URL, headers)
 
 	case *network.EventResponseReceived:
-		c.AddByMIME(e.Response.URL, e.Response.MimeType, networkHeadersToMap(responseRequestHeaders(e.Response)))
+		c.AddByMIME(e.Response.URL, e.Response.MimeType, c.loadHeaders(e.RequestID))
 
 	case *runtime.EventConsoleAPICalled:
 		for _, arg := range e.Args {
@@ -202,13 +212,19 @@ func (c *collector) Listen(ev any) {
 	}
 }
 
-// responseRequestHeaders returns the request headers from a response, falling
-// back to the response headers when RequestHeaders is not populated by Chrome.
-func responseRequestHeaders(r *network.Response) network.Headers {
-	if len(r.RequestHeaders) > 0 {
-		return r.RequestHeaders
-	}
-	return r.Headers
+// storeHeaders records the outgoing request headers for a request ID.
+func (c *collector) storeHeaders(id network.RequestID, headers map[string]string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.requestHeaders[id] = headers
+}
+
+// loadHeaders returns the outgoing request headers recorded for a request ID,
+// or nil if the request carried none.
+func (c *collector) loadHeaders(id network.RequestID) map[string]string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.requestHeaders[id]
 }
 
 func networkHeadersToMap(h network.Headers) map[string]string {
