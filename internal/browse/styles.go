@@ -20,6 +20,7 @@ type styles struct {
 	TitleText lipgloss.Style
 	MetaTitle lipgloss.Style
 	Muted     lipgloss.Style
+	Tagline   lipgloss.Style
 	Overview  lipgloss.Style
 	Err       lipgloss.Style
 }
@@ -34,6 +35,7 @@ func newStyles() styles {
 		TitleText: titleText,
 		MetaTitle: lipgloss.NewStyle().Foreground(fgSecondary),
 		Muted:     lipgloss.NewStyle().Foreground(fgMuted),
+		Tagline:   lipgloss.NewStyle().Foreground(fgMuted).Italic(true).Width(posterCols),
 		Overview: lipgloss.NewStyle().
 			Foreground(fgPrimary).
 			Width(posterCols),

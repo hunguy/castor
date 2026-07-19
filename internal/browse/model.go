@@ -1,6 +1,15 @@
-// Package browse is a Bubble Tea TUI for searching TMDB and picking a
-// movie or TV episode to cast. It does not touch the cast pipeline — Run
-// returns the user's Selection and the caller hands it off.
+// Package browse is a Bubble Tea TUI for searching TMDB and picking a movie or
+// TV episode to cast. It does not touch the cast pipeline — Run returns the
+// user's Selection and the caller hands it off.
+//
+// The screen is composed from focused parts, each owning its own state:
+//
+//	model       — this file: the results browser (curated tabs / search /
+//	              discover feed) plus screen routing and layout.
+//	inspector   — the poster + metadata panel and its async asset loading.
+//	genrePicker — the modal genre filter.
+//	drilldown   — the TV seasons → episodes navigation.
+//	tmdb.Client — the read-only data source.
 package browse
 
 import (
@@ -41,8 +50,7 @@ type Selection struct {
 
 // Run blocks on the TUI until the user picks or quits.
 func Run(ctx context.Context, client *tmdb.Client) (Selection, error) {
-	m := newModel(ctx, client)
-	final, err := tea.NewProgram(m, tea.WithAltScreen()).Run()
+	final, err := tea.NewProgram(newModel(ctx, client), tea.WithAltScreen()).Run()
 	if err != nil {
 		return Selection{}, err
 	}
@@ -55,30 +63,21 @@ func Run(ctx context.Context, client *tmdb.Client) (Selection, error) {
 // ---------------------------------------------------------------- constants
 
 const (
-	// Poster footprint in terminal cells. Half-block rendering means each
-	// cell shows 2 stacked pixels vertically, so the rendered pixel grid is
+	// Poster footprint in terminal cells. Half-block rendering means each cell
+	// shows 2 stacked pixels vertically, so the rendered pixel grid is
 	// posterCols × (posterRows*2). 27 × 40 ≈ 2:3 — the canonical movie-poster
-	// aspect ratio. Sizing the box correctly stops pixterm from stretching
-	// the image horizontally (the "fat face" look in earlier screenshots).
+	// aspect ratio. Sizing the box correctly stops pixterm from stretching the
+	// image horizontally.
 	posterCols     = 27
 	posterRows     = 20
 	searchDebounce = 250 * time.Millisecond
 )
-
-// ---------------------------------------------------------------- screens
 
 type screen int
 
 const (
 	screenBrowse screen = iota
 	screenDrilldown
-)
-
-type drillMode int
-
-const (
-	modeSeasons drillMode = iota
-	modeEpisodes
 )
 
 // ---------------------------------------------------------------- tabs
@@ -98,7 +97,22 @@ func (t tabID) label() string {
 	return [...]string{"Trending", "Popular Movies", "Top Movies", "Popular TV", "Top TV"}[t]
 }
 
-// ---------------------------------------------------------------- list items
+func (t tabID) fetch(ctx context.Context, c *tmdb.Client) ([]tmdb.SearchResult, error) {
+	switch t {
+	case tabPopularMovies:
+		return c.PopularMovies(ctx)
+	case tabTopMovies:
+		return c.TopRatedMovies(ctx)
+	case tabPopularTV:
+		return c.PopularTV(ctx)
+	case tabTopTV:
+		return c.TopRatedTV(ctx)
+	default:
+		return c.Trending(ctx)
+	}
+}
+
+// ---------------------------------------------------------------- result item
 
 type resultItem struct{ r tmdb.SearchResult }
 
@@ -111,53 +125,24 @@ func (i resultItem) Title() string {
 
 func (i resultItem) Description() string {
 	typ := "Movie"
-	if i.r.MediaType == "tv" {
+	if i.r.MediaType == tmdb.MediaTV {
 		typ = "TV"
 	}
-	o := i.r.Overview
-	if o == "" {
+	if i.r.Overview == "" {
 		return typ
 	}
-	if len(o) > 80 {
-		o = o[:77] + "..."
-	}
-	return typ + " · " + o
+	return typ + " · " + truncate(i.r.Overview, 80)
 }
 
 func (i resultItem) FilterValue() string { return i.r.DisplayTitle() }
 
-type seasonItem struct{ s tmdb.Season }
-
-func (i seasonItem) Title() string {
-	if i.s.Name != "" {
-		return fmt.Sprintf("S%02d — %s", i.s.SeasonNumber, i.s.Name)
+func toResultItems(rs []tmdb.SearchResult) []list.Item {
+	items := make([]list.Item, len(rs))
+	for i, r := range rs {
+		items[i] = resultItem{r: r}
 	}
-	return fmt.Sprintf("Season %d", i.s.SeasonNumber)
+	return items
 }
-
-func (i seasonItem) Description() string {
-	return fmt.Sprintf("%d episodes  %s", i.s.EpisodeCount, i.s.AirDate)
-}
-
-func (i seasonItem) FilterValue() string { return i.Title() }
-
-type episodeItem struct{ e tmdb.Episode }
-
-func (i episodeItem) Title() string {
-	return fmt.Sprintf("E%02d — %s", i.e.EpisodeNumber, i.e.Name)
-}
-
-func (i episodeItem) Description() string {
-	if i.e.Overview == "" {
-		return i.e.AirDate
-	}
-	if len(i.e.Overview) > 120 {
-		return i.e.Overview[:117] + "..."
-	}
-	return i.e.Overview
-}
-
-func (i episodeItem) FilterValue() string { return i.e.Name }
 
 // ---------------------------------------------------------------- model
 
@@ -168,49 +153,84 @@ type model struct {
 	styles styles
 	keys   keyMap
 	help   help.Model
+	spin   spinner.Model
 
 	scr screen
 
-	// browse screen
+	// results browser (screenBrowse)
 	tab        tabID
+	mode       browseMode
 	query      textinput.Model
 	queryTok   int // monotonic; only the latest debounce tick fires
-	browse     list.Model
+	results    list.Model
 	topsCache  [tabCount][]list.Item
 	topsLoaded [tabCount]bool
 	topsCursor [tabCount]int
+	disc       discoverState
 
-	// drilldown screen
-	drillMode    drillMode
-	drill        list.Model
-	tvID         int
-	tvName       string
-	seasonNum    int
-	seasonsCache []list.Item // restore on episodes → seasons back
+	// composed parts
+	inspector inspector
+	picker    genrePicker
+	drill     drilldown
 
-	// shared
-	spin    spinner.Model
 	loading bool
 	err     error
 
-	posters       map[string]string
-	posterPending string
-
 	sel  Selection
 	w, h int
+}
+
+func newModel(ctx context.Context, client *tmdb.Client) model {
+	st := newStyles()
+	hlp := newHelp()
+
+	q := textinput.New()
+	q.Placeholder = "Type to search TMDB…"
+	q.Prompt = "❯ "
+	q.PromptStyle = lipgloss.NewStyle().Foreground(accent)
+	q.PlaceholderStyle = lipgloss.NewStyle().Foreground(fgMuted)
+	q.TextStyle = lipgloss.NewStyle().Foreground(fgPrimary)
+	q.CharLimit = 128
+	q.Focus()
+
+	sp := spinner.New()
+	sp.Spinner = spinner.MiniDot
+	sp.Style = lipgloss.NewStyle().Foreground(accent)
+
+	delegate := newDelegate()
+
+	results := list.New(nil, delegate, 0, 0)
+	results.SetShowTitle(false)
+	results.SetShowStatusBar(false)
+	results.SetShowHelp(false)
+	results.SetFilteringEnabled(false) // the textinput owns filtering on browse
+
+	return model{
+		ctx:       ctx,
+		client:    client,
+		styles:    st,
+		keys:      defaultKeys(),
+		help:      hlp,
+		spin:      sp,
+		scr:       screenBrowse,
+		tab:       tabTrending,
+		mode:      modeCurated,
+		query:     q,
+		results:   results,
+		disc:      discoverState{sort: tmdb.SortPopularity},
+		inspector: newInspector(ctx, client, st),
+		picker:    newGenrePicker(st, hlp),
+		drill:     newDrilldown(ctx, client, delegate),
+		loading:   true,
+	}
 }
 
 func newDelegate() list.DefaultDelegate {
 	d := list.NewDefaultDelegate()
 	d.Styles.NormalTitle = d.Styles.NormalTitle.Foreground(fgPrimary)
 	d.Styles.NormalDesc = d.Styles.NormalDesc.Foreground(fgMuted)
-	d.Styles.SelectedTitle = d.Styles.SelectedTitle.
-		Foreground(accent).
-		BorderForeground(accent).
-		Bold(true)
-	d.Styles.SelectedDesc = d.Styles.SelectedDesc.
-		Foreground(fgSecondary).
-		BorderForeground(accent)
+	d.Styles.SelectedTitle = d.Styles.SelectedTitle.Foreground(accent).BorderForeground(accent).Bold(true)
+	d.Styles.SelectedDesc = d.Styles.SelectedDesc.Foreground(fgSecondary).BorderForeground(accent)
 	d.Styles.DimmedTitle = d.Styles.DimmedTitle.Foreground(fgMuted)
 	d.Styles.DimmedDesc = d.Styles.DimmedDesc.Foreground(fgMuted)
 	d.Styles.FilterMatch = lipgloss.NewStyle().Foreground(accent).Underline(true)
@@ -230,54 +250,7 @@ func newHelp() help.Model {
 	return h
 }
 
-func newModel(ctx context.Context, client *tmdb.Client) model {
-	st := newStyles()
-
-	q := textinput.New()
-	q.Placeholder = "Type to search TMDB…"
-	q.Prompt = "❯ "
-	q.PromptStyle = lipgloss.NewStyle().Foreground(accent)
-	q.PlaceholderStyle = lipgloss.NewStyle().Foreground(fgMuted)
-	q.TextStyle = lipgloss.NewStyle().Foreground(fgPrimary)
-	q.CharLimit = 128
-	q.Focus()
-
-	sp := spinner.New()
-	sp.Spinner = spinner.MiniDot // smaller, more refined than the braille Dot
-	sp.Style = lipgloss.NewStyle().Foreground(accent)
-
-	delegate := newDelegate()
-
-	browse := list.New(nil, delegate, 0, 0)
-	browse.SetShowTitle(false)
-	browse.SetShowStatusBar(false)
-	browse.SetShowHelp(false)
-	browse.SetFilteringEnabled(false) // textinput owns filtering on browse
-
-	drill := list.New(nil, delegate, 0, 0)
-	drill.SetShowTitle(false)
-	drill.SetShowStatusBar(false)
-	drill.SetShowHelp(false)
-	drill.SetFilteringEnabled(true)
-
-	return model{
-		ctx:     ctx,
-		client:  client,
-		styles:  st,
-		keys:    defaultKeys(),
-		help:    newHelp(),
-		scr:     screenBrowse,
-		tab:     tabTrending,
-		query:   q,
-		browse:  browse,
-		drill:   drill,
-		spin:    sp,
-		posters: map[string]string{},
-		loading: true,
-	}
-}
-
-// ---------------------------------------------------------------- messages
+// ---------------------------------------------------------------- results messages
 
 type topsLoadedMsg struct {
 	tab tabID
@@ -296,34 +269,9 @@ type searchDoneMsg struct {
 	err error
 }
 
-type tvDoneMsg struct {
-	tv  *tmdb.TVDetails
-	err error
-}
-
-type seasonDoneMsg struct {
-	sd  *tmdb.SeasonDetails
-	err error
-}
-
 func loadTopCmd(ctx context.Context, c *tmdb.Client, t tabID) tea.Cmd {
 	return func() tea.Msg {
-		var (
-			res []tmdb.SearchResult
-			err error
-		)
-		switch t {
-		case tabTrending:
-			res, err = c.Trending(ctx)
-		case tabPopularMovies:
-			res, err = c.PopularMovies(ctx)
-		case tabTopMovies:
-			res, err = c.TopRatedMovies(ctx)
-		case tabPopularTV:
-			res, err = c.PopularTV(ctx)
-		case tabTopTV:
-			res, err = c.TopRatedTV(ctx)
-		}
+		res, err := t.fetch(ctx, c)
 		return topsLoadedMsg{tab: t, res: res, err: err}
 	}
 }
@@ -341,24 +289,15 @@ func searchCmd(ctx context.Context, c *tmdb.Client, tok int, q string) tea.Cmd {
 	}
 }
 
-func tvCmd(ctx context.Context, c *tmdb.Client, id int) tea.Cmd {
-	return func() tea.Msg {
-		tv, err := c.TV(ctx, id)
-		return tvDoneMsg{tv: tv, err: err}
-	}
-}
-
-func seasonCmd(ctx context.Context, c *tmdb.Client, tvID, n int) tea.Cmd {
-	return func() tea.Msg {
-		sd, err := c.Season(ctx, tvID, n)
-		return seasonDoneMsg{sd: sd, err: err}
-	}
-}
-
 // ---------------------------------------------------------------- tea.Model
 
 func (m model) Init() tea.Cmd {
-	return tea.Batch(m.spin.Tick, textinput.Blink, loadTopCmd(m.ctx, m.client, m.tab))
+	return tea.Batch(
+		m.spin.Tick,
+		textinput.Blink,
+		loadTopCmd(m.ctx, m.client, m.tab),
+		loadGenresCmd(m.ctx, m.client),
+	)
 }
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -367,6 +306,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.w, m.h = msg.Width, msg.Height
 		m.help.Width = msg.Width
 		m.resize()
+		if m.picker.shown {
+			m.picker.resize(m.w, m.h)
+		}
 		return m, nil
 
 	case spinner.TickMsg:
@@ -375,44 +317,33 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 
 	case tea.KeyMsg:
-		switch {
-		case key.Matches(msg, m.keys.Quit):
+		if key.Matches(msg, m.keys.Quit) {
 			return m, tea.Quit
-		case key.Matches(msg, m.keys.Help):
-			if !m.drillInFilter() {
-				m.help.ShowAll = !m.help.ShowAll
-				m.resize()
-				return m, nil
-			}
 		}
-
-	case topsLoadedMsg:
-		m.loading = false
-		if msg.err != nil {
-			m.err = msg.err
+		if m.picker.shown {
+			cmd, action := m.picker.update(msg, m.keys, m.w, m.h)
+			if action == genreApplied {
+				cmd = m.enterDiscover()
+			}
+			return m, cmd
+		}
+		if key.Matches(msg, m.keys.Help) && !m.drilldownFiltering() {
+			m.help.ShowAll = !m.help.ShowAll
+			m.resize()
 			return m, nil
 		}
-		items := toResultItems(msg.res)
-		m.topsCache[msg.tab] = items
-		m.topsLoaded[msg.tab] = true
-		if m.scr == screenBrowse && m.tab == msg.tab && m.query.Value() == "" {
-			m.browse.SetItems(items)
-			m.browse.Select(m.topsCursor[msg.tab])
-			return m, m.maybeFetchPosterFor(m.browse)
+
+	case genresLoadedMsg:
+		if msg.err == nil {
+			m.picker.setCatalog(msg.cat)
 		}
 		return m, nil
 
+	case topsLoadedMsg:
+		return m.onTopsLoaded(msg)
+
 	case searchTickMsg:
-		if msg.tok != m.queryTok {
-			return m, nil // stale; a newer keystroke supersedes this tick
-		}
-		if msg.query == "" {
-			m.applyTab()
-			return m, m.maybeFetchPosterFor(m.browse)
-		}
-		m.loading = true
-		m.err = nil
-		return m, tea.Batch(searchCmd(m.ctx, m.client, msg.tok, msg.query), m.spin.Tick)
+		return m.onSearchTick(msg)
 
 	case searchDoneMsg:
 		if msg.tok != m.queryTok {
@@ -423,9 +354,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.err = msg.err
 			return m, nil
 		}
-		m.browse.SetItems(toResultItems(msg.res))
-		m.browse.Select(0)
-		return m, m.maybeFetchPosterFor(m.browse)
+		m.results.SetItems(toResultItems(msg.res))
+		m.results.Select(0)
+		return m, m.inspector.hover()
+
+	case discoverDoneMsg:
+		return m, m.onDiscoverDone(msg)
+
+	case posterReadyMsg, detailsReadyMsg, hoverSettleMsg:
+		cmd, _ := m.inspector.update(msg, m.selectedResult())
+		return m, cmd
 
 	case tvDoneMsg:
 		m.loading = false
@@ -433,18 +371,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.err = msg.err
 			return m, nil
 		}
-		m.tvName = msg.tv.Name
-		items := make([]list.Item, 0, len(msg.tv.Seasons))
-		for _, s := range msg.tv.Seasons {
-			if s.EpisodeCount == 0 {
-				continue
-			}
-			items = append(items, seasonItem{s: s})
-		}
-		m.seasonsCache = items
-		m.drill.SetItems(items)
-		m.drill.Select(0)
-		m.drillMode = modeSeasons
+		m.drill.showSeasons(msg.tv)
 		m.scr = screenDrilldown
 		return m, nil
 
@@ -454,22 +381,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.err = msg.err
 			return m, nil
 		}
-		items := make([]list.Item, 0, len(msg.sd.Episodes))
-		for _, e := range msg.sd.Episodes {
-			items = append(items, episodeItem{e: e})
-		}
-		m.drill.SetItems(items)
-		m.drill.Select(0)
-		m.drillMode = modeEpisodes
-		return m, nil
-
-	case posterReadyMsg:
-		if msg.err == nil && msg.ansi != "" {
-			m.posters[msg.posterPath] = msg.ansi
-		}
-		if msg.posterPath == m.posterPending {
-			m.posterPending = ""
-		}
+		m.drill.showEpisodes(msg.sd)
 		return m, nil
 	}
 
@@ -482,376 +394,318 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m model) onTopsLoaded(msg topsLoadedMsg) (tea.Model, tea.Cmd) {
+	m.loading = false
+	if msg.err != nil {
+		m.err = msg.err
+		return m, nil
+	}
+	items := toResultItems(msg.res)
+	m.topsCache[msg.tab] = items
+	m.topsLoaded[msg.tab] = true
+	if m.scr == screenBrowse && m.mode == modeCurated && m.tab == msg.tab && m.query.Value() == "" {
+		m.results.SetItems(items)
+		m.results.Select(m.topsCursor[msg.tab])
+		return m, m.inspector.hover()
+	}
+	return m, nil
+}
+
+func (m model) onSearchTick(msg searchTickMsg) (tea.Model, tea.Cmd) {
+	if msg.tok != m.queryTok {
+		return m, nil // stale; a newer keystroke supersedes this tick
+	}
+	if msg.query == "" {
+		m.applyMode()
+		return m, m.inspector.hover()
+	}
+	m.loading = true
+	m.err = nil
+	return m, tea.Batch(searchCmd(m.ctx, m.client, msg.tok, msg.query), m.spin.Tick)
+}
+
 // ---------------------------------------------------------------- browse update
 
 func (m model) updateBrowse(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if km, ok := msg.(tea.KeyMsg); ok {
-		switch {
-		case key.Matches(km, m.keys.Tab):
-			if m.query.Value() != "" {
-				return m, nil // tab is meaningless while searching
-			}
-			return m.cycleTab(1)
-		case key.Matches(km, m.keys.ShiftTab):
-			if m.query.Value() != "" {
-				return m, nil
-			}
-			return m.cycleTab(-1)
-		case key.Matches(km, m.keys.Enter):
-			if it, ok := m.browse.SelectedItem().(resultItem); ok {
-				return m.pickResult(it.r)
-			}
-			return m, nil
-		case key.Matches(km, m.keys.Back):
-			if m.query.Value() != "" {
-				m.query.SetValue("")
-				m.queryTok++
-				m.applyTab()
-				return m, m.maybeFetchPosterFor(m.browse)
-			}
-			return m, nil
-		case key.Matches(km, m.keys.Up),
-			key.Matches(km, m.keys.Down),
-			key.Matches(km, m.keys.PageUp),
-			key.Matches(km, m.keys.PageDown):
-			return m.delegateBrowseList(msg)
-		}
+	km, ok := msg.(tea.KeyMsg)
+	if !ok {
+		return m.forwardToQuery(msg)
 	}
-	// Anything else: forward to the textinput. If the query changed, kick
-	// a debounced search tick.
+	switch {
+	case key.Matches(km, m.keys.Genres):
+		m.picker.open(m.w, m.h)
+		return m, nil
+	case key.Matches(km, m.keys.Sort):
+		if m.mode == modeDiscover {
+			return m, m.cycleSort()
+		}
+		return m, nil
+	case key.Matches(km, m.keys.Media):
+		if m.mode == modeDiscover {
+			m.picker.toggleMedia(m.w, m.h)
+			return m, m.enterDiscover()
+		}
+		return m, nil
+	case key.Matches(km, m.keys.Tab):
+		if m.query.Value() == "" {
+			return m, m.cycleTab(1)
+		}
+		return m, nil
+	case key.Matches(km, m.keys.ShiftTab):
+		if m.query.Value() == "" {
+			return m, m.cycleTab(-1)
+		}
+		return m, nil
+	case key.Matches(km, m.keys.Enter):
+		if r := m.selectedResult(); r != nil {
+			return m.pickResult(*r)
+		}
+		return m, nil
+	case key.Matches(km, m.keys.Back):
+		return m.onBrowseBack()
+	case key.Matches(km, m.keys.Up),
+		key.Matches(km, m.keys.Down),
+		key.Matches(km, m.keys.PageUp),
+		key.Matches(km, m.keys.PageDown):
+		return m.delegateResults(msg)
+	}
+	return m.forwardToQuery(msg)
+}
+
+// forwardToQuery sends a message to the search input and, when the query text
+// changed, kicks a debounced search (reflowing if the discover filter bar
+// appeared or disappeared).
+func (m model) forwardToQuery(msg tea.Msg) (tea.Model, tea.Cmd) {
 	prev := m.query.Value()
 	var cmd tea.Cmd
 	m.query, cmd = m.query.Update(msg)
-	if m.query.Value() != prev {
-		m.queryTok++
-		return m, tea.Batch(cmd, searchTickCmd(m.queryTok, m.query.Value()))
+	if m.query.Value() == prev {
+		return m, cmd
 	}
-	return m, cmd
+	if (prev == "") != (m.query.Value() == "") {
+		m.resize()
+	}
+	m.queryTok++
+	return m, tea.Batch(cmd, searchTickCmd(m.queryTok, m.query.Value()))
 }
 
-func (m model) cycleTab(delta int) (tea.Model, tea.Cmd) {
-	m.topsCursor[m.tab] = m.browse.Index()
+func (m model) onBrowseBack() (tea.Model, tea.Cmd) {
+	if m.query.Value() != "" {
+		m.query.SetValue("")
+		m.queryTok++
+		m.applyMode()
+		m.resize() // the discover filter bar reappears on query clear
+		return m, m.inspector.hover()
+	}
+	if m.mode == modeDiscover {
+		return m, m.exitDiscover()
+	}
+	return m, nil
+}
+
+func (m *model) cycleTab(delta int) tea.Cmd {
+	m.topsCursor[m.tab] = m.results.Index()
 	n := int(tabCount)
 	m.tab = tabID(((int(m.tab)+delta)%n + n) % n)
-	return m, m.ensureTabLoaded()
+	if m.mode != modeCurated {
+		m.mode = modeCurated
+		m.resize()
+	}
+	return m.ensureTabLoaded()
 }
 
 func (m *model) applyTab() {
-	m.browse.SetItems(m.topsCache[m.tab])
+	m.results.SetItems(m.topsCache[m.tab])
 	if m.topsCursor[m.tab] < len(m.topsCache[m.tab]) {
-		m.browse.Select(m.topsCursor[m.tab])
+		m.results.Select(m.topsCursor[m.tab])
 	}
+}
+
+// applyMode restores the underlying feed (curated tab or discover results)
+// after a search query is cleared.
+func (m *model) applyMode() {
+	if m.mode == modeDiscover {
+		m.results.SetItems(toResultItems(m.disc.results))
+		m.results.Select(0)
+		return
+	}
+	m.applyTab()
 }
 
 func (m *model) ensureTabLoaded() tea.Cmd {
 	if m.topsLoaded[m.tab] {
 		m.applyTab()
-		return m.maybeFetchPosterFor(m.browse)
+		return m.inspector.hover()
 	}
 	m.loading = true
 	m.err = nil
 	return tea.Batch(loadTopCmd(m.ctx, m.client, m.tab), m.spin.Tick)
 }
 
-func (m model) delegateBrowseList(msg tea.Msg) (tea.Model, tea.Cmd) {
-	prev := m.browse.Index()
+func (m model) delegateResults(msg tea.Msg) (tea.Model, tea.Cmd) {
+	prev := m.results.Index()
 	var cmd tea.Cmd
-	m.browse, cmd = m.browse.Update(msg)
+	m.results, cmd = m.results.Update(msg)
 	cmds := []tea.Cmd{cmd}
-	if m.browse.Index() != prev {
-		if c := m.maybeFetchPosterFor(m.browse); c != nil {
-			cmds = append(cmds, c)
-		}
+	if m.results.Index() != prev {
+		cmds = append(cmds, m.inspector.hover(), m.maybeLoadMore())
 	}
 	return m, tea.Batch(cmds...)
 }
 
 func (m model) pickResult(r tmdb.SearchResult) (tea.Model, tea.Cmd) {
 	switch r.MediaType {
-	case "movie":
-		m.sel = Selection{
-			Kind:   KindMovie,
-			TMDBID: strconv.Itoa(r.ID),
-			Title:  r.DisplayTitle(),
-		}
+	case tmdb.MediaMovie:
+		m.sel = Selection{Kind: KindMovie, TMDBID: strconv.Itoa(r.ID), Title: r.DisplayTitle()}
 		return m, tea.Quit
-	case "tv":
-		m.tvID = r.ID
-		m.tvName = r.DisplayTitle()
+	case tmdb.MediaTV:
 		m.loading = true
 		m.err = nil
-		return m, tea.Batch(tvCmd(m.ctx, m.client, r.ID), m.spin.Tick)
+		return m, tea.Batch(m.drill.begin(r.ID, r.DisplayTitle()), m.spin.Tick)
 	}
 	return m, nil
+}
+
+func (m model) selectedResult() *tmdb.SearchResult {
+	if it, ok := m.results.SelectedItem().(resultItem); ok {
+		return &it.r
+	}
+	return nil
 }
 
 // ---------------------------------------------------------------- drilldown update
 
 func (m model) updateDrilldown(msg tea.Msg) (tea.Model, tea.Cmd) {
-	if km, ok := msg.(tea.KeyMsg); ok && !m.drill.SettingFilter() {
-		switch {
-		case key.Matches(km, m.keys.Back):
-			switch m.drillMode {
-			case modeEpisodes:
-				m.drill.SetItems(m.seasonsCache)
-				m.drill.Select(0)
-				m.drillMode = modeSeasons
-				return m, nil
-			case modeSeasons:
-				m.scr = screenBrowse
-				return m, nil
-			}
-		case key.Matches(km, m.keys.Enter):
-			return m.drillEnter()
-		}
+	out := m.drill.update(msg, m.keys)
+	switch {
+	case out.selected != nil:
+		m.sel = *out.selected
+		return m, tea.Quit
+	case out.exit:
+		m.scr = screenBrowse
+		return m, nil
+	case out.loading:
+		m.loading = true
+		m.err = nil
+		return m, tea.Batch(out.cmd, m.spin.Tick)
 	}
-	var cmd tea.Cmd
-	m.drill, cmd = m.drill.Update(msg)
-	return m, cmd
+	return m, out.cmd
 }
 
-func (m model) drillEnter() (tea.Model, tea.Cmd) {
-	switch m.drillMode {
-	case modeSeasons:
-		if it, ok := m.drill.SelectedItem().(seasonItem); ok {
-			m.seasonNum = it.s.SeasonNumber
-			m.loading = true
-			m.err = nil
-			return m, tea.Batch(seasonCmd(m.ctx, m.client, m.tvID, it.s.SeasonNumber), m.spin.Tick)
-		}
-	case modeEpisodes:
-		if it, ok := m.drill.SelectedItem().(episodeItem); ok {
-			m.sel = Selection{
-				Kind:    KindEpisode,
-				TMDBID:  strconv.Itoa(m.tvID),
-				Title:   fmt.Sprintf("%s · S%02dE%02d — %s", m.tvName, m.seasonNum, it.e.EpisodeNumber, it.e.Name),
-				Season:  uint(m.seasonNum),
-				Episode: uint(it.e.EpisodeNumber),
-			}
-			return m, tea.Quit
-		}
-	}
-	return m, nil
-}
-
-func (m model) drillInFilter() bool {
-	return m.scr == screenDrilldown && m.drill.SettingFilter()
-}
-
-// ---------------------------------------------------------------- poster fetch
-
-func (m *model) maybeFetchPosterFor(l list.Model) tea.Cmd {
-	it, ok := l.SelectedItem().(resultItem)
-	if !ok || it.r.PosterPath == "" {
-		return nil
-	}
-	if _, ok := m.posters[it.r.PosterPath]; ok {
-		return nil
-	}
-	if m.posterPending == it.r.PosterPath {
-		return nil
-	}
-	m.posterPending = it.r.PosterPath
-	return fetchPosterCmd(m.ctx, it.r.PosterURL("w500"), it.r.PosterPath, posterCols, posterRows)
+func (m model) drilldownFiltering() bool {
+	return m.scr == screenDrilldown && m.drill.filtering()
 }
 
 // ---------------------------------------------------------------- layout
 
-// chrome rows reserved outside the body — header (1) + a blank between
-// header and body (1) + a blank between body and footer (1). Browse also
-// reserves the query row.
-func (m model) bodyHeight() int {
-	footerH := lipgloss.Height(m.footer())
-	chrome := 3 // drilldown: header + 2 blanks
-	if m.scr == screenBrowse {
-		chrome = 4 // browse: header + query + 2 blanks
-	}
-	return max(m.h-footerH-chrome, 8)
-}
-
 func (m *model) resize() {
 	h := m.bodyHeight()
-	wList := max(m.w-posterCols-spGutter, 30)
-	m.browse.SetSize(wList, h)
-	m.drill.SetSize(max(m.w, 30), h)
+	m.results.SetSize(max(m.w-posterCols-spGutter, 30), h)
+	m.drill.setSize(m.w, h)
 	m.query.Width = max(m.w-spInline*2, 20)
+}
+
+// bodyHeight is the fixed list/poster row height: total minus footer and the
+// chrome above the body (header, query, discover filter bar, blank spacers).
+func (m model) bodyHeight() int {
+	chrome := 3 // drilldown: header + 2 blanks
+	if m.scr == screenBrowse {
+		chrome = 4 // header + query + 2 blanks
+		if m.mode == modeDiscover && m.query.Value() == "" {
+			chrome++ // filter bar
+		}
+	}
+	return max(m.h-lipgloss.Height(m.footer())-chrome, 8)
 }
 
 // ---------------------------------------------------------------- view
 
 func (m model) View() string {
-	switch m.scr {
-	case screenDrilldown:
-		return m.viewDrilldown()
+	switch {
+	case m.picker.shown:
+		return m.picker.view(m.spin, m.w, m.h)
+	case m.scr == screenDrilldown:
+		return lipgloss.JoinVertical(lipgloss.Left, m.drill.view(m.styles), "", m.footer())
 	default:
 		return m.viewBrowse()
 	}
 }
 
 func (m model) viewBrowse() string {
-	return lipgloss.JoinVertical(
-		lipgloss.Left,
-		m.browseHeader(),
-		m.query.View(),
-		"",
-		m.bodyRow(m.browse),
-		"",
-		m.footer(),
-	)
+	rows := []string{m.browseHeader(), m.query.View()}
+	if m.mode == modeDiscover && m.query.Value() == "" {
+		rows = append(rows, m.filterBar())
+	}
+	rows = append(rows, "", m.bodyRow(), "", m.footer())
+	return lipgloss.JoinVertical(lipgloss.Left, rows...)
 }
 
-// browseHeader puts the active label flush-left and the tab indicator
-// dots flush-right via lipgloss.PlaceHorizontal — no manual gap arithmetic.
-// When searching, we drop the query echo from the title because the
+// browseHeader puts the active label flush-left and a mode indicator flush-right
+// via lipgloss.PlaceHorizontal — tab dots on curated, media type on discover.
+// When searching, the query echo is dropped from the title because the
 // textinput right below already shows it.
 func (m model) browseHeader() string {
-	label := m.tab.label()
-	if m.query.Value() != "" {
+	var label, rhs string
+	switch {
+	case m.query.Value() != "":
 		label = "Search"
+	case m.mode == modeDiscover:
+		label = "Discover"
+		rhs = m.styles.Muted.Render(m.picker.mediaLabel())
+	default:
+		label = m.tab.label()
+		rhs = m.renderTabDots()
 	}
 	title := m.styles.Title.Render(label)
-	dots := m.renderTabDots()
-	rhs := lipgloss.PlaceHorizontal(max(m.w-lipgloss.Width(title), 0), lipgloss.Right, dots)
-	return lipgloss.JoinHorizontal(lipgloss.Top, title, rhs)
+	placed := lipgloss.PlaceHorizontal(max(m.w-lipgloss.Width(title), 0), lipgloss.Right, rhs)
+	return lipgloss.JoinHorizontal(lipgloss.Top, title, placed)
+}
+
+// filterBar summarizes the active discover filters (genres + sort) on the left
+// and echoes the discover key hints on the right.
+func (m model) filterBar() string {
+	summary := "All genres"
+	if names := m.picker.selectedNames(); len(names) > 0 {
+		summary = strings.Join(names, ", ")
+	}
+	left := lipgloss.NewStyle().Padding(0, spInline).Render(
+		m.styles.MetaTitle.Render(truncate(summary, max(m.w/2, 12))) +
+			m.styles.Muted.Render("  ·  Sort: "+m.disc.sort.Label()),
+	)
+	hints := m.help.Styles.ShortDesc.Render("^g genres · ^s sort · ^t movie/tv")
+	rhs := lipgloss.PlaceHorizontal(max(m.w-lipgloss.Width(left), 0), lipgloss.Right, hints)
+	return lipgloss.JoinHorizontal(lipgloss.Top, left, rhs)
 }
 
 func (m model) renderTabDots() string {
-	activeStyle := lipgloss.NewStyle().Foreground(accent)
-	inactiveStyle := lipgloss.NewStyle().Foreground(fgMuted)
-	parts := make([]string, 0, int(tabCount))
+	active := lipgloss.NewStyle().Foreground(accent)
+	inactive := lipgloss.NewStyle().Foreground(fgMuted)
+	parts := make([]string, tabCount)
 	for i := range tabCount {
-		glyph := "○"
-		st := inactiveStyle
-		if i == m.tab && m.query.Value() == "" {
-			glyph = "●"
-			st = activeStyle
+		if i == m.tab {
+			parts[i] = active.Render("●")
+		} else {
+			parts[i] = inactive.Render("○")
 		}
-		parts = append(parts, st.Render(glyph))
 	}
 	return strings.Join(parts, " ")
 }
 
-func (m model) viewDrilldown() string {
-	return lipgloss.JoinVertical(
-		lipgloss.Left,
-		m.drillHeader(),
-		"",
-		m.drill.View(),
-		"",
-		m.footer(),
-	)
-}
-
-func (m model) drillHeader() string {
-	sep := m.styles.Muted.Render(" › ")
-	parts := []string{m.styles.TitleText.Render(m.tvName)}
-	switch m.drillMode {
-	case modeSeasons:
-		parts = append(parts, sep, m.styles.TitleText.Render("Seasons"))
-	case modeEpisodes:
-		parts = append(parts,
-			sep, m.styles.TitleText.Render(fmt.Sprintf("S%02d", m.seasonNum)),
-			sep, m.styles.TitleText.Render("Episodes"),
-		)
-	}
-	return headerPad(strings.Join(parts, ""))
-}
-
-// bodyRow renders the left list + right poster panel as a single fixed-
-// height row.
-func (m model) bodyRow(l list.Model) string {
-	left := l.View()
-	right := m.posterPanel(l, m.bodyHeight())
+// bodyRow renders the results list + inspector panel as one fixed-height row.
+func (m model) bodyRow() string {
+	h := m.bodyHeight()
+	left := m.results.View()
+	right := m.inspector.view(m.selectedResult(), h)
 	return lipgloss.JoinHorizontal(lipgloss.Top, left, strings.Repeat(" ", spGutter), right)
-}
-
-// posterPanel renders the selected item's poster + metadata, clamped to
-// exactly totalH rows. The poster string is either a stream of per-cell
-// true-color ANSI half-block escapes (pixterm fallback) or a single
-// Kitty/iTerm/Sixel image escape sequence padded to posterRows lines —
-// in BOTH cases we deliberately do NOT pass it through lipgloss's
-// Width/Height/Render path: lipgloss rewrites ANSI runs and would strip
-// per-pixel colour codes from pixterm, and it would (worse) split the
-// inline-image control sequence and corrupt it.
-func (m model) posterPanel(l list.Model, totalH int) string {
-	it, ok := l.SelectedItem().(resultItem)
-	if !ok {
-		return blankRect(posterCols, totalH)
-	}
-	r := it.r
-
-	var poster string
-	if ansi, ok := m.posters[r.PosterPath]; ok && r.PosterPath != "" {
-		poster = ansi
-	} else {
-		poster = blankRect(posterCols, posterRows)
-	}
-
-	titleLine := r.DisplayTitle()
-	if y := r.Year(); y != "" {
-		titleLine = fmt.Sprintf("%s (%s)", titleLine, y)
-	}
-	// Truncate title to the poster panel width — otherwise long titles
-	// like "The Punisher: One Last Kill (2026)" overflow the right column
-	// and push the bodyRow layout sideways.
-	if runes := []rune(titleLine); len(runes) > posterCols {
-		titleLine = string(runes[:posterCols-1]) + "…"
-	}
-	rating := ""
-	if r.VoteAverage > 0 {
-		rating = fmt.Sprintf("★ %.1f", r.VoteAverage)
-	}
-
-	const metaFixedRows = 4 // blank + title + rating + blank
-	overviewH := max(totalH-posterRows-metaFixedRows, 0)
-	overview := m.styles.Overview.MaxHeight(overviewH).Render(r.Overview)
-
-	parts := []string{
-		poster,
-		"",
-		m.styles.MetaTitle.Render(titleLine),
-		m.styles.Muted.Render(rating),
-		"",
-		overview,
-	}
-	return clampRows(strings.Join(parts, "\n"), totalH)
-}
-
-func blankRect(w, h int) string {
-	if w <= 0 || h <= 0 {
-		return ""
-	}
-	line := strings.Repeat(" ", w)
-	rows := make([]string, h)
-	for i := range rows {
-		rows[i] = line
-	}
-	return strings.Join(rows, "\n")
-}
-
-func clampRows(s string, n int) string {
-	if n <= 0 {
-		return ""
-	}
-	lines := strings.Split(s, "\n")
-	if len(lines) > n {
-		lines = lines[:n]
-	}
-	for len(lines) < n {
-		lines = append(lines, "")
-	}
-	return strings.Join(lines, "\n")
 }
 
 // ---------------------------------------------------------------- footer
 
-// footer always renders helpLine + a status row so the body height does
-// not jitter as loading/error transitions toggle. Both rows share the
-// spInline indent of the title and list items so the screen reads on a
-// single left edge.
+// footer always renders the help line + a status row so the body height does
+// not jitter as loading/error transitions toggle.
 func (m model) footer() string {
 	pad := lipgloss.NewStyle().Padding(0, spInline)
-	helpLine := pad.Render(m.help.View(screenKeys{k: m.keys, s: m.scr}))
+	helpLine := pad.Render(m.help.View(screenKeys{k: m.keys, s: m.scr, discover: m.mode == modeDiscover}))
 	status := m.statusLine()
 	if status == "" {
 		status = " " // reserve the row
@@ -868,14 +722,4 @@ func (m model) statusLine() string {
 		return m.styles.Err.Render("error: " + m.err.Error())
 	}
 	return ""
-}
-
-// ---------------------------------------------------------------- helpers
-
-func toResultItems(rs []tmdb.SearchResult) []list.Item {
-	items := make([]list.Item, 0, len(rs))
-	for _, r := range rs {
-		items = append(items, resultItem{r: r})
-	}
-	return items
 }

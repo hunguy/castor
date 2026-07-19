@@ -27,7 +27,7 @@ func PickDevice(ctx context.Context, timeout time.Duration, defaultName string) 
 	return device.Info{}, nil
 }
 
-type discoverDoneMsg struct {
+type devicesDoneMsg struct {
 	devices []device.Info
 	err     error
 }
@@ -57,8 +57,10 @@ type pickerModel struct {
 
 type pickerItem device.Info
 
-func (i pickerItem) Title() string       { return i.Name }
-func (i pickerItem) Description() string { return fmt.Sprintf("%s  %s", strings.ToUpper(string(i.Type)), i.Address) }
+func (i pickerItem) Title() string { return i.Name }
+func (i pickerItem) Description() string {
+	return fmt.Sprintf("%s  %s", strings.ToUpper(string(i.Type)), i.Address)
+}
 func (i pickerItem) FilterValue() string { return i.Name }
 
 func newPickerModel(timeout time.Duration, defaultName string) pickerModel {
@@ -94,7 +96,7 @@ func newPickerModel(timeout time.Duration, defaultName string) pickerModel {
 }
 
 func (m pickerModel) Init() tea.Cmd {
-	return tea.Batch(m.spin.Tick, discoverCmd(m.timeout))
+	return tea.Batch(m.spin.Tick, discoverDevicesCmd(m.timeout))
 }
 
 func (m pickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -109,7 +111,7 @@ func (m pickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.spin, cmd = m.spin.Update(msg)
 		return m, cmd
 
-	case discoverDoneMsg:
+	case devicesDoneMsg:
 		m.loading = false
 		if msg.err != nil {
 			m.err = msg.err
@@ -237,16 +239,9 @@ var pickKeys = pickerKeyMap{
 	Back:  key.NewBinding(key.WithKeys("esc"), key.WithHelp("esc", "back")),
 }
 
-func discoverCmd(timeout time.Duration) tea.Cmd {
+func discoverDevicesCmd(timeout time.Duration) tea.Cmd {
 	return func() tea.Msg {
 		devices, err := device.Discover(context.Background(), timeout)
-		return discoverDoneMsg{devices: devices, err: err}
+		return devicesDoneMsg{devices: devices, err: err}
 	}
-}
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }
