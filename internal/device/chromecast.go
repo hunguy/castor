@@ -1,6 +1,7 @@
 package device
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"log/slog"
@@ -55,45 +56,50 @@ func discoverChromecast(ctx context.Context) []Info {
 	var devices []Info
 	seen := make(map[string]struct{})
 	for entry := range entries {
-		var host string
-		switch {
-		case entry.AddrV4 != nil:
-			host = entry.AddrV4.String()
-		case entry.AddrV6 != nil:
-			host = entry.AddrV6.String()
-		default:
+		info, ok := chromecastInfo(entry)
+		if !ok {
 			continue
 		}
 
-		key := entry.UUID
-		if key == "" {
-			key = host + ":" + strconv.Itoa(entry.Port)
-		}
-		if _, ok := seen[key]; ok {
+		// mDNS re-announces the same device; dedupe by UUID, falling back
+		// to the resolved address when the entry carries no UUID.
+		key := cmp.Or(entry.UUID, info.Address)
+		if _, dup := seen[key]; dup {
 			continue
 		}
 		seen[key] = struct{}{}
 
-		name := entry.DeviceName
-		if name == "" {
-			name = entry.Name
-		}
-		if name == "" {
-			name = entry.Host
-		}
-
-		address := host
-		if entry.Port > 0 && entry.Port != chromecastPort {
-			address = net.JoinHostPort(host, strconv.Itoa(entry.Port))
-		}
-
-		devices = append(devices, Info{
-			Name:    name,
-			Type:    TypeChromecast,
-			Address: address,
-		})
+		devices = append(devices, info)
 	}
 	return devices
+}
+
+// chromecastInfo maps an mDNS cast entry to a device Info, reporting false when
+// the entry advertises no usable IP address. IPv4 is preferred over IPv6, and
+// the friendly DeviceName over the mDNS instance and host names. A non-default
+// port is preserved as host:port so cast groups, which advertise on random high
+// ports rather than 8009, stay connectable; a bare host implies port 8009.
+func chromecastInfo(entry castdns.CastEntry) (Info, bool) {
+	var host string
+	switch {
+	case entry.AddrV4 != nil:
+		host = entry.AddrV4.String()
+	case entry.AddrV6 != nil:
+		host = entry.AddrV6.String()
+	default:
+		return Info{}, false
+	}
+
+	address := host
+	if entry.Port > 0 && entry.Port != chromecastPort {
+		address = net.JoinHostPort(host, strconv.Itoa(entry.Port))
+	}
+
+	return Info{
+		Name:    cmp.Or(entry.DeviceName, entry.Name, entry.Host),
+		Type:    TypeChromecast,
+		Address: address,
+	}, true
 }
 
 func (c *chromecastDevice) Play(_ context.Context, streamURL *url.URL, contentType string) error {
