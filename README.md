@@ -23,25 +23,24 @@
 
 # Castor
 
-Imagine buying a very nice TV and figuring out it doesn't allow casting from random websites...
+Smart TVs won't cast arbitrary web video, and screen mirroring is laggy and drops resolution. Castor casts the real stream instead, at full quality, from your terminal.
 
-- Then you switch to the longest **HDMI cable** you can find.
-- Then you start doing **screen mirroring**: your computer lags, resolution tanks, nothing feels right.
+*I built it because I couldn't cast web video from my laptop to my TV: no Chromecast, no AirPlay.*
 
-Castor is a CLI that extracts video streams from websites, handles format compatibility, and casts to your TV in real time, with optional auto-generated subtitles burned directly into the video.
+Point it at any web page and Castor finds the video, extracts the stream, transcodes it for your TV, and casts in real time. It also takes a direct stream URL or an IMDB/TMDB id, and can burn in auto-generated subtitles.
 
 <p align="center">
-  <img src=".github/images/screen-selection.png" alt="Browsing TMDB titles in the castor TUI" width="640"/>
+  <img src=".github/images/screen-selection.png" alt="Browsing titles in the castor TUI" width="640"/>
   <br/>
-  <sub><em>Run <code>castor cast</code> to browse trending titles, search TMDB, inspect posters and metadata, then cast, without leaving the terminal.</em></sub>
+  <sub><em>Run <code>castor cast</code> to browse and search titles, inspect posters and metadata, then cast, without leaving the terminal.</em></sub>
 </p>
 
 > [!NOTE]
-> **How does extraction work?**
+> **How extraction works**
 >
-> Castor launches a headless Chrome with a randomized browser fingerprint and stealth scripts to hide automation. It listens to all network activity via Chrome DevTools Protocol, captures video streams, then runs an action pipeline: click the page, navigate into the largest iframe, solve Cloudflare Turnstile if detected, and click again as fallback.
+> Castor launches headless Chrome with a randomized fingerprint and stealth scripts to hide automation. It watches all network traffic over the Chrome DevTools Protocol to capture the video stream, then runs a short action pipeline: click the page, navigate into the largest iframe, solve a Cloudflare Turnstile if one appears, and click again as a fallback.
 >
-> This works on most streaming websites but won't beat sophisticated bot protection.
+> This works on most streaming sites but won't beat sophisticated bot protection.
 
 
 ## Installation
@@ -141,8 +140,8 @@ That's all you need to cast by id, the quickest path with no TMDB key:
 castor cast movie tt12300742
 ```
 
-> [!WARNING]
-> **Streaming sites are volatile.** `cast movie` resolves the id against the `sources` proxies in your [`config.yaml`](config.yaml), here `https://vidsrc-embed.ru`. Those point at third-party streaming sites that can go offline, change domains, or start blocking at any time. When one stops resolving, rotate it: swap in a working mirror/domain in the `sources` proxies list.
+> [!NOTE]
+> **Sources can change.** `cast movie` resolves the id against the `proxies` you set in [`config.yaml`](config.yaml). These are external sites, so one can go offline or move without notice. If a cast stops resolving, update that entry in the `proxies` list or add another.
 
 Prefer to browse? Add a `tmdb.api_key` and run `castor cast` for an interactive TUI. It first asks which device to cast to: every DLNA/UPnP renderer on your network, discovered on the fly and with your configured device pre-selected:
 
@@ -159,8 +158,8 @@ Then it opens a TMDB-backed browser: filter by genre, search, inspect posters an
 # Interactive TMDB browser: search, pick a movie/episode, cast (needs tmdb.api_key)
 castor cast
 
-# Cast from a streaming site's player page
-castor cast player https://1embed.cc/embed/movie/tt12300742
+# Cast whatever video is playing on a web page
+castor cast player https://example.com/watch/some-video
 
 # Cast by IMDB/TMDB id, using the sources in your config
 castor cast movie   tt33028778
@@ -189,6 +188,11 @@ whisper:
   # language: "fr"         # default: English
   # model_path: ""         # default: ggml-tiny.en (~75 MB, auto-downloaded)
 ```
+
+
+## Disclaimer
+
+Castor hosts no video and ships no content of its own. It's a general tool for casting a stream to your TV, not tied to any particular website. The sources in the example `config.yaml` are just that, examples; which sites you point it at, and staying within the law and their terms of use, is your responsibility. Only cast content you have the right to access.
 
 
 ## Contributing
