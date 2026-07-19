@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -66,34 +67,19 @@ func FindInfo(ctx context.Context, timeout time.Duration, dtype Type, name strin
 	return Info{}, fmt.Errorf("device %q (type %s) not found", name, dtype)
 }
 
-// Discover scans the local network for renderers: DLNA via SSDP and
-// Chromecast via mDNS (_googlecast._tcp). Both scans run in parallel and
-// share the same timeout window.
+// Discover scans the local network for renderers: DLNA via SSDP and Chromecast
+// via mDNS (_googlecast._tcp). Both scans run in parallel and share the same
+// timeout window; a protocol that fails contributes no devices rather than
+// failing the whole scan.
 func Discover(ctx context.Context, timeout time.Duration) ([]Info, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	var (
-		wg      sync.WaitGroup
-		mu      sync.Mutex
-		devices []Info
-	)
-	collect := func(found []Info) {
-		mu.Lock()
-		devices = append(devices, found...)
-		mu.Unlock()
-	}
-
-	wg.Add(2)
-	go func() {
-		defer wg.Done()
-		collect(discoverDLNA(ctx))
-	}()
-	go func() {
-		defer wg.Done()
-		collect(discoverChromecast(ctx))
-	}()
+	var dlna, chromecast []Info
+	var wg sync.WaitGroup
+	wg.Go(func() { dlna = discoverDLNA(ctx) })
+	wg.Go(func() { chromecast = discoverChromecast(ctx) })
 	wg.Wait()
 
-	return devices, nil
+	return slices.Concat(dlna, chromecast), nil
 }

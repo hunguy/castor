@@ -19,6 +19,8 @@ type dlnaDevice struct {
 	transport *av1.AVTransport1
 }
 
+var _ Device = (*dlnaDevice)(nil)
+
 // discoverDLNA browses SSDP for UPnP MediaRenderer devices until ctx expires.
 func discoverDLNA(ctx context.Context) []Info {
 	results, err := goupnp.DiscoverDevicesCtx(ctx, "urn:schemas-upnp-org:device:MediaRenderer:1")

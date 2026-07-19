@@ -21,6 +21,8 @@ type chromecastDevice struct {
 	app *application.Application
 }
 
+var _ Device = (*chromecastDevice)(nil)
+
 // connectChromecast opens the cast application channel. The underlying
 // library's Start has no context support, so cancellation cannot interrupt
 // the dial. Address may be a bare host (default port 8009) or host:port as
