@@ -5,49 +5,56 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/go-playground/validator/v10"
 	"github.com/go-viper/mapstructure/v2"
 	"github.com/knadh/koanf/parsers/yaml"
-	"github.com/knadh/koanf/providers/confmap"
 	"github.com/knadh/koanf/providers/env"
 	"github.com/knadh/koanf/providers/file"
 	"github.com/knadh/koanf/v2"
+
+	"github.com/stupside/castor/internal/cast"
+	"github.com/stupside/castor/internal/cast/whisper"
+	"github.com/stupside/castor/internal/source/extract"
+	"github.com/stupside/castor/internal/source/resolve"
 )
 
 // defaults is the base configuration layer: every knob a fresh install
-// shouldn't have to care about. The file and environment overlay it, so an
-// explicit value always wins. Only what genuinely identifies an install has
-// no default — the device to cast to and the sources to cast from.
-var defaults = map[string]any{
-	"network.timeout": "5s",
-
-	"browser.timeout":  "30s",
-	"browser.headless": true,
-
-	"resolver.hls_timeout":           "30s",
-	"resolver.ffprobe_path":          "ffprobe",
-	"resolver.probe_timeout":         "30s",
-	"resolver.probe_max_concurrency": 2,
-	"resolver.max_height":            1080,
-
-	"capture.patterns":            []string{`\.m3u8`, `master\.m3u8`, `index\.m3u8`, `/playlist/`},
-	"capture.max_candidates":      100,
-	"capture.max_concurrency":     4,
-	"capture.collection_window":   "10s",
-	"capture.grace_after_actions": "15s",
-
-	"actions.navigate_iframe_timeout":   "10s",
-	"actions.navigate_iframe_max_depth": 5,
-	"actions.turnstile_retry_timeout":   "10s",
-	"actions.bypass_turnstile_timeout":  "20s",
-
-	"transcode.ffmpeg_path": "ffmpeg",
-	"transcode.rw_timeout":  "30s",
-
-	// Pinned rather than "auto": the streaming transcriber re-detects on
-	// every buffer with auto, which misfires on music and quiet stretches.
-	"whisper.language": "en",
+// shouldn't have to care about. It's the real, typed Config so a default is
+// checked against the field it fills (a mistyped key can't compile), and it's
+// loaded as the lowest-priority layer: the file and environment overlay it,
+// so an explicit value always wins. Only what genuinely identifies an install
+// is left zero: the device to cast to and the sources to cast from.
+func defaults() *Config {
+	return &Config{
+		Network: cast.NetworkConfig{Timeout: 5 * time.Second},
+		Browser: extract.BrowserConfig{Timeout: 30 * time.Second, Headless: true},
+		Resolver: resolve.Config{
+			HLSTimeout:          30 * time.Second,
+			FFprobePath:         "ffprobe",
+			ProbeTimeout:        30 * time.Second,
+			ProbeMaxConcurrency: 2,
+			MaxHeight:           1080,
+		},
+		Capture: extract.CaptureConfig{
+			Patterns:          []string{`\.m3u8`, `master\.m3u8`, `index\.m3u8`, `/playlist/`},
+			MaxCandidates:     100,
+			MaxConcurrency:    4,
+			CollectionWindow:  10 * time.Second,
+			GraceAfterActions: 15 * time.Second,
+		},
+		Actions: extract.ActionConfig{
+			NavigateIframeTimeout:  10 * time.Second,
+			NavigateIframeMaxDepth: 5,
+			TurnstileRetryTimeout:  10 * time.Second,
+			BypassTurnstileTimeout: 20 * time.Second,
+		},
+		Transcode: cast.TranscodeConfig{FFmpegPath: "ffmpeg", RWTimeout: 30 * time.Second},
+		// Pinned rather than "auto": the streaming transcriber re-detects on
+		// every buffer with auto, which misfires on music and quiet stretches.
+		Whisper: whisper.Config{Language: "en"},
+	}
 }
 
 // envPrefix is the prefix for environment overrides. Convention:
@@ -59,14 +66,12 @@ var defaults = map[string]any{
 //	CASTOR_BROWSER__NO_SANDBOX → browser.no_sandbox
 const envPrefix = "CASTOR_"
 
-// Load layers defaults, the YAML file at path, and CASTOR_* environment
-// variables (in that order — later wins), then validates the result.
+// Load reads the YAML file at path plus a sibling *.local.yaml and CASTOR_*
+// environment variables, decodes them over the typed defaults, and validates
+// the result.
 func Load(path string) (*Config, error) {
 	k := koanf.New(".")
 
-	if err := k.Load(confmap.Provider(defaults, "."), nil); err != nil {
-		return nil, fmt.Errorf("loading defaults: %w", err)
-	}
 	if err := k.Load(file.Provider(path), yaml.Parser()); err != nil {
 		return nil, fmt.Errorf("loading %s: %w", path, err)
 	}
@@ -83,21 +88,21 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("loading environment overrides: %w", err)
 	}
 
-	cfg := new(Config)
+	// Seed the target with the defaults and let the file and environment layers
+	// overwrite only the keys they actually carry. mapstructure leaves a field
+	// untouched when its key is absent or null, so a present-but-empty section
+	// (`resolver:` with everything commented out is YAML null) keeps every
+	// default beneath it, and a partial section overrides just the keys it names.
+	cfg := defaults()
 	if err := k.UnmarshalWithConf("", cfg, koanf.UnmarshalConf{
 		Tag: "yaml",
 		DecoderConfig: &mapstructure.DecoderConfig{
 			DecodeHook: mapstructure.ComposeDecodeHookFunc(
-				// Parse strings like "30s", "5m" into time.Duration.
 				mapstructure.StringToTimeDurationHookFunc(),
-				// Split comma-separated env strings into []string.
 				mapstructure.StringToSliceHookFunc(","),
-				// Honor custom types implementing encoding.TextUnmarshaler.
 				mapstructure.TextUnmarshallerHookFunc(),
 			),
 			WeaklyTypedInput: true,
-			Result:           cfg,
-			TagName:          "yaml",
 		},
 	}); err != nil {
 		return nil, fmt.Errorf("unmarshaling config: %w", err)
