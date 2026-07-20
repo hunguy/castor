@@ -34,5 +34,6 @@ hooks:
 	git config core.hooksPath .githooks
 
 $(LIB):
-	cmake -S $(WHISPER) -B $(BUILD) -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DWHISPER_BUILD_TESTS=OFF -DWHISPER_BUILD_EXAMPLES=OFF
+	cmake -S $(WHISPER) -B $(BUILD) -DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DWHISPER_BUILD_TESTS=OFF -DWHISPER_BUILD_EXAMPLES=OFF \
+		-DCMAKE_C_FLAGS="-I$(CURDIR)/$(WHISPER)/ggml/include"
 	cmake --build $(BUILD) --target whisper -j
