@@ -93,27 +93,18 @@ func runSpooled(parentCtx context.Context, cfg Config, plan Plan, localIP string
 	hasSubs := subs != nil
 	caps := d.Capabilities()
 	if !hasSubs && withinMaxHeight(srcInfo, cfg.Resolver.MaxHeight) && caps.CanCopyVideo(srcInfo) {
-		// Copy path: leave the video bitstream untouched (near-zero CPU); audio
-		// is still re-encoded to AAC (the template sets that) so Samsung accepts
-		// it. Pace from the source's own bit rate.
+		// Copy the video bitstream untouched; audio is still re-encoded to AAC.
 		opts.VideoEncoder = nil
-		bitsPerSec := srcInfo.BitRate
-		if bitsPerSec <= 0 {
-			t := dlnaVideoTargets[media.CodecH264]
-			bitsPerSec = encodedBitrateBPS(t.maxrate, dlnaAudioBitrate)
-		}
-		plan.SendRate, plan.SendBurst = dlnaPacing(bitsPerSec)
 	} else {
 		// Re-encode. Pick the most efficient codec the renderer advertises and
 		// this host can encode in hardware (HEVC at half the bitrate, else
-		// H.264), then apply that codec's bitrate target and pacing.
+		// H.264), then apply that codec's VBV-capped bitrate target.
 		enc := selectVideoEncoder(caps, func(c media.Codec) (ffmpeg.Encoder, bool) {
 			return ffmpeg.SelectEncoder(ctx, cfg.Transcode.FFmpegPath, c)
 		})
 		opts.VideoEncoder = &enc
 		t := dlnaVideoTargets[enc.Codec]
 		opts.VideoBitrate, opts.VideoMaxrate, opts.VideoBufsize = t.bitrate, t.maxrate, t.bufsize
-		plan.SendRate, plan.SendBurst = dlnaPacingFor(enc.Codec)
 	}
 
 	videoCodec := "copy"

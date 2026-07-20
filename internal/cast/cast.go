@@ -25,7 +25,7 @@ import (
 // (initial burst, then 2x realtime) so the CDN doesn't flag it as a ripper
 // — and tees a PCM feed to whisper. The encoder reads the growing spool through a
 // blocking tail, burns the live transcript into the frames via drawtext,
-// and the paced HTTP broadcaster serves the result to the TV. One upstream
+// and the HTTP broadcaster serves the result to the TV. One upstream
 // connection means CDN token/rate limits can't kill playback, and once the
 // spool is complete the cast is fully offline.
 func Play(ctx context.Context, cfg Config, stream *media.Stream) error {
@@ -89,7 +89,6 @@ func logPlan(ctx context.Context, plan Plan) {
 		"spool", plan.Spool,
 		"output_content_type", plan.OutputContentType,
 		"subtitle_delivery", plan.SubtitleDelivery,
-		"send_rate_bps", plan.SendRate,
 	)
 }
 

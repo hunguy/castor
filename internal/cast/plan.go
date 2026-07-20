@@ -3,8 +3,6 @@ package cast
 import (
 	"net/http"
 	"net/url"
-	"strconv"
-	"strings"
 
 	"github.com/stupside/castor/internal/cast/ffmpeg"
 	"github.com/stupside/castor/internal/device"
@@ -46,15 +44,6 @@ type Plan struct {
 
 	// SubtitleDelivery says how subtitles reach the renderer, if at all.
 	SubtitleDelivery SubtitleDelivery
-
-	// SendRate is the target byte/sec for the HTTP stream server. 0 disables
-	// pacing.
-	SendRate int64
-
-	// SendBurst is the initial unrestricted byte budget before pacing kicks
-	// in — gives the renderer enough preroll to leave "loading" without
-	// over-stuffing its internal buffer.
-	SendBurst int64
 }
 
 // SubtitleDelivery is how the planner intends to get subtitles on screen.
@@ -122,51 +111,28 @@ const (
 	dlnaKeyframeSeconds = 2
 	// dlnaAudioBitrate is the AAC re-encode target.
 	dlnaAudioBitrate = "256k"
-	// dlnaPrerollSeconds is how much of the encoded output the renderer is
-	// allowed to gulp before the token bucket engages: just enough to leave the
-	// "loading" state, since going higher only lets the TV buffer ahead of
-	// playback rate, which is exactly what overflows its internal ring.
-	dlnaPrerollSeconds = 4
-	// dlnaPaceHeadroomPct is how much faster than the encoded rate we send in
-	// steady state, slightly above playback so the renderer's buffer stays full
-	// but doesn't grow.
-	dlnaPaceHeadroomPct = 5
 )
 
 // videoTarget is a VBV-capped bitrate: the average, the peak cap, and the buffer
 // window the cap applies over.
 type videoTarget struct{ bitrate, maxrate, bufsize string }
 
-// dlnaVideoTargets is the encode target per codec. HEVC needs about half of
-// H.264 for the same quality, which halves what the pacer moves and shrinks the
-// renderer's buffering-headroom problem. maxrate == bitrate makes the cap a real
-// ceiling the constant-rate pacer can rely on; bufsize is ~2s, so the preroll
-// covers a full VBV excursion. Adding a codec the pipeline encodes to is one
-// entry here.
+// dlnaVideoTargets is the re-encode target per codec, bounding the transcoder's
+// output so it stays within the renderer's decode budget. HEVC needs about half
+// of H.264 for the same quality. maxrate == bitrate makes the VBV cap a true
+// ceiling rather than an average the encoder overshoots; bufsize is ~2s. Adding
+// a codec the pipeline encodes to is one entry here.
 var dlnaVideoTargets = map[media.Codec]videoTarget{
 	media.CodecH264: {bitrate: "4M", maxrate: "4M", bufsize: "8M"},
 	media.CodecHEVC: {bitrate: "2M", maxrate: "2M", bufsize: "4M"},
 }
 
-// dlnaPacingFor sizes the HTTP send pacing for a codec's encode target, off its
-// peak (maxrate) so the pacer's fixed rate is a true ceiling, not an average the
-// encoder overshoots.
-func dlnaPacingFor(codec media.Codec) (sendRate, sendBurst int64) {
-	t := dlnaVideoTargets[codec]
-	return dlnaPacing(encodedBitrateBPS(t.maxrate, dlnaAudioBitrate))
-}
-
 func planDLNA(in PlanInput) Plan {
-	// Pacing here is a sane default for the initial log; the pipeline recomputes
-	// it once the codec is chosen from the renderer's advertised capabilities.
-	sendRate, sendBurst := dlnaPacingFor(media.CodecH264)
 	p := Plan{
 		SourceURL:         in.SourceURL,
 		SourceHeaders:     in.SourceHeaders,
 		SourceContentType: in.SourceContentType,
 		OutputContentType: "video/mp2t",
-		SendRate:          sendRate,
-		SendBurst:         sendBurst,
 		Spool:             true,
 		// Transcode carries the codec-independent output targets (container,
 		// audio, height, GOP). VideoEncoder and the video bitrate are left unset:
@@ -188,14 +154,6 @@ func planDLNA(in PlanInput) Plan {
 		p.SubtitleDelivery = SubtitleHardsub
 	}
 	return p
-}
-
-// dlnaPacing turns the output bit rate into the HTTP server's token-bucket
-// settings: a steady send rate slightly above playback, and an initial burst
-// sized to leave the renderer's "loading" state without over-filling its ring.
-func dlnaPacing(encodedBitsPerSec int64) (sendRate, sendBurst int64) {
-	return encodedBitsPerSec * (100 + dlnaPaceHeadroomPct) / 100 / 8,
-		encodedBitsPerSec * dlnaPrerollSeconds / 8
 }
 
 func planChromecast(in PlanInput) Plan {
@@ -230,34 +188,4 @@ func planChromecast(in PlanInput) Plan {
 			AudioChannels:   2,
 		},
 	}
-}
-
-// encodedBitrateBPS turns ffmpeg-style bitrate strings ("4M", "256k") into
-// bits per second and sums them. Returns 0 on a bad string (caller should
-// just fall back to skipping rate calculations).
-func encodedBitrateBPS(video, audio string) int64 {
-	return parseBitrate(video) + parseBitrate(audio)
-}
-
-func parseBitrate(s string) int64 {
-	if s == "" {
-		return 0
-	}
-	mult := int64(1)
-	switch s[len(s)-1] {
-	case 'k', 'K':
-		mult = 1_000
-		s = s[:len(s)-1]
-	case 'm', 'M':
-		mult = 1_000_000
-		s = s[:len(s)-1]
-	case 'g', 'G':
-		mult = 1_000_000_000
-		s = s[:len(s)-1]
-	}
-	n, err := strconv.ParseInt(strings.TrimSpace(s), 10, 64)
-	if err != nil {
-		return 0
-	}
-	return n * mult
 }

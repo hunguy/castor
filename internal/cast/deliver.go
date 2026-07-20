@@ -65,8 +65,6 @@ func serveToDevice(ctx context.Context, plan Plan, dev device.Device, localIP st
 		Extension:   fmtInfo.Extension,
 		Headers:     dev.StreamHeaders(fmtInfo.ContentType),
 		SpoolPath:   filepath.Join(workDir, "out"+fmtInfo.Extension),
-		SendRate:    plan.SendRate,
-		SendBurst:   plan.SendBurst,
 	}, stream)
 	if err != nil {
 		return fmt.Errorf("starting stream server: %w", err)
