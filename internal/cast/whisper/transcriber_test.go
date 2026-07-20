@@ -39,11 +39,11 @@ func TestSameWordTextMatch(t *testing.T) {
 		a, b word
 		want bool
 	}{
-		{word{Text: "Hello,"}, word{Text: "hello"}, true},         // punctuation + case
-		{word{Text: "world"}, word{Text: "world"}, true},          // exact
-		{word{Text: "again"}, word{Text: "against"}, false},       // different words
-		{word{Text: "[Music]"}, word{Text: "[Music]"}, true},      // noise matches itself
-		{word{Text: "hello"}, word{Text: "hello!"}, true},        // trailing punct
+		{word{Text: "Hello,"}, word{Text: "hello"}, true},    // punctuation + case
+		{word{Text: "world"}, word{Text: "world"}, true},     // exact
+		{word{Text: "again"}, word{Text: "against"}, false},  // different words
+		{word{Text: "[Music]"}, word{Text: "[Music]"}, true}, // noise matches itself
+		{word{Text: "hello"}, word{Text: "hello!"}, true},    // trailing punct
 	}
 	for _, tt := range tests {
 		got := sameWord(tt.a, tt.b)
