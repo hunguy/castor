@@ -1,7 +1,7 @@
 name: continuous-delivery
 
 # release-please grooms a standing Release PR from Conventional Commits; on its
-# merge it cuts the v<x.y.z> tag + GitHub Release and hands the stable version to
+# merge it cuts the <x.y.z> tag + GitHub Release and hands the stable version to
 # _delivery (the shared build/publish engine the canary lane also calls). Because
 # both jobs run in this single workflow run, no PAT is needed to bridge the tag to
 # the build.
@@ -37,7 +37,9 @@ jobs:
       - name: Read released version
         id: version
         if: steps.release.outputs.releases_created == 'true'
-        run: echo "version=$(jq -r '."."' .release-please-manifest.json)" >> "$GITHUB_OUTPUT"
+        run: |
+          version=$(echo '${{ steps.release.outputs.release }}' | jq -r '.tag_name')
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
   delivery:
     needs: please
