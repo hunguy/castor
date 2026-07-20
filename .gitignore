@@ -6,6 +6,7 @@
 
 # Personal config override (keeps private sources/paths out of version control)
 config.local.yaml
+config.yaml
 
 # Built castor binary (produced by `make build`)
 /castor
@@ -16,3 +17,9 @@ third_party/whisper.cpp/build_*/
 
 # zig cache (created by mlugg/setup-zig in CI)
 .zig-cache/
+
+# castor-api local artifacts
+castor-api/.env
+castor-api/.venv/
+castor-api/.ropeproject/
+castor-api/__pycache__/
