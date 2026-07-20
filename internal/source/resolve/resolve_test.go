@@ -1,13 +1,8 @@
 package resolve
 
 import (
-	"context"
-	"io"
-	"net/http"
-	"net/http/httptest"
 	"net/url"
 	"testing"
-	"time"
 
 	"github.com/stupside/castor/internal/media"
 )
@@ -52,21 +47,16 @@ func TestPickVariantUnknownHeightIsEligible(t *testing.T) {
 	}
 }
 
-func TestParsePlaylistResolution(t *testing.T) {
-	master := "#EXTM3U\n" +
+func TestParsePlaylist(t *testing.T) {
+	body := "#EXTM3U\n" +
 		"#EXT-X-STREAM-INF:BANDWIDTH=1000000,RESOLUTION=854x480\n480.m3u8\n" +
 		"#EXT-X-STREAM-INF:BANDWIDTH=6000000,RESOLUTION=1920x1080\n1080.m3u8\n" +
 		"#EXT-X-STREAM-INF:BANDWIDTH=20000000,RESOLUTION=3840x2160\n2160.m3u8\n"
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = io.WriteString(w, master)
-	}))
-	defer srv.Close()
-
-	u, err := url.Parse(srv.URL + "/master.m3u8")
+	u, err := url.Parse("http://example.com/master.m3u8")
 	if err != nil {
 		t.Fatal(err)
 	}
-	variants, err := parsePlaylist(context.Background(), 5*time.Second, u, nil)
+	variants, err := parsePlaylist(body, u)
 	if err != nil {
 		t.Fatal(err)
 	}

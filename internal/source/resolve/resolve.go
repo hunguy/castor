@@ -14,35 +14,30 @@ import (
 
 // Resolve determines the final URL and content type for a stream. When the
 // source is an HLS playlist with multiple variants, it picks the highest-
-// bandwidth one no taller than cfg.MaxHeight. Stream headers are preserved
-// through resolution.
+// bandwidth one no taller than cfg.MaxHeight. Only the fields resolution
+// establishes are rewritten; everything else on the stream passes through.
 func Resolve(ctx context.Context, cfg Config, stream *media.Stream) (*media.Stream, error) {
-	streamURL := stream.URL
-	headers := stream.Headers
+	resolved := *stream
 
-	ct := stream.ContentType
-	if ct == "" {
-		info, err := probeStream(ctx, cfg.FFprobePath, cfg.ProbeTimeout, streamURL, headers)
+	if resolved.ContentType == "" {
+		info, err := probeStream(ctx, cfg.FFprobePath, cfg.ProbeTimeout, resolved.URL, resolved.Headers)
 		if err != nil {
 			return nil, fmt.Errorf("probing stream: %w", err)
 		}
-		ct = info.ContentType
+		resolved.ContentType = info.ContentType
 	}
 
-	if ct == media.HLS {
-		variants, err := parsePlaylist(ctx, cfg.HLSTimeout, streamURL, headers)
+	if resolved.ContentType == media.HLS {
+		body, err := fetchPlaylist(ctx, cfg.HLSTimeout, resolved.URL, resolved.Headers)
 		if err != nil {
 			slog.WarnContext(ctx, "HLS playlist resolution failed, using original", "error", err)
 		} else {
-			streamURL = pickVariant(variants, cfg.MaxHeight).URL
+			variants, _ := parsePlaylist(body, resolved.URL)
+			resolved.URL = pickVariant(variants, cfg.MaxHeight).URL
 		}
 	}
 
-	return &media.Stream{
-		URL:         streamURL,
-		Headers:     headers,
-		ContentType: ct,
-	}, nil
+	return &resolved, nil
 }
 
 // pickVariant chooses which HLS variant to pull: the highest-bandwidth one no
@@ -159,7 +154,7 @@ func RankStreams(ctx context.Context, cfg Config, streams []*media.Stream) (*med
 
 			slog.DebugContext(ctx, "probing stream", "url", s.URL, "index", i+1, "total", len(streams))
 			info, err := probeStream(ctx, cfg.FFprobePath, cfg.ProbeTimeout, s.URL, s.Headers)
-			out := &media.Stream{URL: s.URL, Headers: s.Headers, ContentType: s.ContentType}
+			out := *s // copy the candidate; the probe only rewrites Bandwidth/Live
 			switch {
 			case err != nil:
 				// Transient failure (403/timeout/reset): keep as a zero-bandwidth fallback.
@@ -168,20 +163,20 @@ func RankStreams(ctx context.Context, cfg Config, streams []*media.Stream) (*med
 				// Probed cleanly but no castable video+audio → decoy, drop hard.
 				slog.WarnContext(ctx, "stream rejected: no castable video+audio",
 					"url", s.URL, "has_video", info.HasVideo, "has_audio", info.HasAudio)
-				cands[i] = candidate{stream: out, decoy: true}
+				cands[i] = candidate{stream: &out, decoy: true}
 				return
 			case info.Duration > 0 && info.Duration < minContentDuration:
 				// Too short to be a feature/episode → spliced-in ad, drop hard so it
 				// can't win over the real title on bandwidth.
 				slog.WarnContext(ctx, "stream rejected: too short to be feature content, treating as ad",
 					"url", s.URL, "duration", info.Duration)
-				cands[i] = candidate{stream: out, decoy: true}
+				cands[i] = candidate{stream: &out, decoy: true}
 				return
 			default:
 				out.Bandwidth = max(info.BitRate, 1)
 				slog.DebugContext(ctx, "probed stream", "url", s.URL, "bitrate", info.BitRate, "height", info.VideoHeight)
 			}
-			cands[i] = candidate{stream: out}
+			cands[i] = candidate{stream: &out}
 			if info != nil {
 				cands[i].height = info.VideoHeight
 			}
@@ -222,11 +217,12 @@ func ListStreams(ctx context.Context, cfg Config, streams []*media.Stream) []Str
 	var details []StreamDetail
 	for _, s := range streams {
 		if s.ContentType == media.HLS {
-			variants, err := parsePlaylist(ctx, cfg.HLSTimeout, s.URL, s.Headers)
+			body, err := fetchPlaylist(ctx, cfg.HLSTimeout, s.URL, s.Headers)
 			if err != nil {
 				slog.WarnContext(ctx, "HLS variant resolution failed", "url", s.URL, "error", err)
 				continue
 			}
+			variants, _ := parsePlaylist(body, s.URL)
 			for _, v := range variants {
 				info, err := probeStream(ctx, cfg.FFprobePath, cfg.ProbeTimeout, v.URL, s.Headers)
 				if err != nil {

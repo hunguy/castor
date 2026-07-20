@@ -1,21 +1,15 @@
 package resolve
 
 import (
-	"bufio"
 	"context"
 	"fmt"
+	"io"
 	"maps"
 	"net/http"
 	"net/url"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
-)
-
-var (
-	bandwidthRe  = regexp.MustCompile(`BANDWIDTH=(\d+)`)
-	resolutionRe = regexp.MustCompile(`RESOLUTION=\d+x(\d+)`)
 )
 
 // hlsVariant is a single variant stream listed in an HLS master playlist.
@@ -25,44 +19,54 @@ type hlsVariant struct {
 	Height    int // display height from RESOLUTION; 0 when the master omits it
 }
 
-// parsePlaylist fetches an HLS playlist and returns its variants. When the
-// playlist is a media playlist (no #EXT-X-STREAM-INF tags) it returns a
-// single variant pointing at the original URL with zero bandwidth — the
-// caller can treat that uniformly.
-func parsePlaylist(ctx context.Context, hlsTimeout time.Duration, masterURL *url.URL, headers http.Header) ([]hlsVariant, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, masterURL.String(), nil)
+// fetchPlaylist fetches an HLS playlist and returns its body.
+func fetchPlaylist(ctx context.Context, hlsTimeout time.Duration, url *url.URL, headers http.Header) (string, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url.String(), nil)
 	if err != nil {
-		return nil, fmt.Errorf("creating request: %w", err)
+		return "", fmt.Errorf("creating request: %w", err)
 	}
 	maps.Copy(req.Header, headers)
 
 	client := &http.Client{Timeout: hlsTimeout}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("fetching playlist: %w", err)
+		return "", fmt.Errorf("fetching playlist: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("fetching playlist: HTTP %d", resp.StatusCode)
+		return "", fmt.Errorf("fetching playlist: HTTP %d", resp.StatusCode)
 	}
 
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", fmt.Errorf("reading playlist: %w", err)
+	}
+	return string(body), nil
+}
+
+// parsePlaylist parses an HLS playlist body and returns its variants.
+// For a media playlist (no #EXT-X-STREAM-INF) it returns a single variant
+// with the base URL and zero bandwidth — the caller can treat that uniformly.
+func parsePlaylist(body string, baseURL *url.URL) ([]hlsVariant, error) {
 	var (
 		variants      []hlsVariant
 		nextIsURL     bool
 		currentBW     int64
 		currentHeight int
 	)
-	scanner := bufio.NewScanner(resp.Body)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
+	for line := range strings.Lines(body) {
+		line = strings.TrimRight(line, "\n\r")
+		if line == "" {
+			continue
+		}
 
 		if nextIsURL {
 			nextIsURL = false
-			if line == "" || strings.HasPrefix(line, "#") {
+			if strings.HasPrefix(line, "#") {
 				continue
 			}
-			variantURL, err := masterURL.Parse(line)
+			variantURL, err := baseURL.Parse(line)
 			if err != nil {
 				continue
 			}
@@ -71,24 +75,29 @@ func parsePlaylist(ctx context.Context, hlsTimeout time.Duration, masterURL *url
 		}
 
 		if strings.HasPrefix(line, "#EXT-X-STREAM-INF:") {
-			// The URL is the next non-comment line. BANDWIDTH is mandatory per
-			// the HLS spec and RESOLUTION is optional; take whichever are present.
 			currentBW, currentHeight = 0, 0
-			if m := bandwidthRe.FindStringSubmatch(line); len(m) == 2 {
-				currentBW, _ = strconv.ParseInt(m[1], 10, 64)
-			}
-			if m := resolutionRe.FindStringSubmatch(line); len(m) == 2 {
-				currentHeight, _ = strconv.Atoi(m[1])
+			if _, attrs, ok := strings.Cut(line, ":"); ok {
+				for attr := range strings.SplitSeq(attrs, ",") {
+					k, v, ok := strings.Cut(attr, "=")
+					if !ok {
+						continue
+					}
+					switch k {
+					case "BANDWIDTH":
+						currentBW, _ = strconv.ParseInt(v, 10, 64)
+					case "RESOLUTION":
+						if _, h, ok := strings.Cut(v, "x"); ok {
+							currentHeight, _ = strconv.Atoi(h)
+						}
+					}
+				}
 			}
 			nextIsURL = true
 		}
 	}
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("reading playlist: %w", err)
-	}
 
 	if len(variants) == 0 {
-		variants = []hlsVariant{{URL: masterURL, Bandwidth: 0}}
+		return []hlsVariant{{URL: baseURL, Bandwidth: 0}}, nil
 	}
 	return variants, nil
 }
